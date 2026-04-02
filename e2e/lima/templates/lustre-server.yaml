@@ -1,0 +1,37 @@
+minimumLimaVersion: 2.0.0
+
+base:
+- template:_images/rocky-8
+
+vmType: qemu
+arch: x86_64
+cpus: 4
+memory: 8GiB
+disk: 40GiB
+mountType: reverse-sshfs
+
+containerd:
+  system: false
+  user: false
+
+provision:
+- mode: system
+  script: |
+    #!/bin/bash
+    set -euo pipefail
+    dnf install -y fuse-sshfs
+
+mounts:
+- location: "~"
+  writable: false
+
+networks:
+- lima: user-v2
+
+additionalDisks:
+- name: mdt
+  format: true
+  fsType: ext4
+- name: ost
+  format: true
+  fsType: ext4
