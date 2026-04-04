@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 import subprocess
@@ -15,7 +16,7 @@ from lustre_client_observer.agent import (
     classify_actor_type,
     load_traceable_functions,
     parse_event_line,
-    resolve_lustre_mount_device,
+    resolve_lustre_mount_identity,
     validate_lustre_mount_selection,
 )
 
@@ -182,7 +183,7 @@ def test_validate_lustre_mount_selection_accepts_single_matching_mount() -> None
     )
 
 
-def test_resolve_lustre_mount_device_uses_stat_device_value() -> None:
+def test_resolve_lustre_mount_identity_uses_major_minor_from_stat_device() -> None:
     class FakeStat:
         st_dev = 424242
 
@@ -199,13 +200,13 @@ def test_resolve_lustre_mount_device_uses_stat_device_value() -> None:
     )
 
     assert (
-        resolve_lustre_mount_device(
+        resolve_lustre_mount_identity(
             "/mnt/lustre1",
             mounts_text=mounts_text,
             realpath_fn=fake_realpath,
             stat_fn=fake_stat,
         )
-        == 424242
+        == (os.major(424242), os.minor(424242))
     )
 
 
@@ -234,7 +235,8 @@ def test_load_traceable_functions_parses_function_names() -> None:
 def test_build_bpftrace_program_skips_missing_optional_ptlrpc_probes() -> None:
     program = build_bpftrace_program(
         "/mnt/lustre",
-        target_device=424242,
+        target_major=977,
+        target_minor=981636,
         available_symbols={
             "ll_lookup_nd",
             "ll_file_open",
@@ -248,6 +250,9 @@ def test_build_bpftrace_program_skips_missing_optional_ptlrpc_probes() -> None:
     assert "kprobe:ptlrpc_queue_wait" in program
     assert "kprobe:ptlrpc_send_new_req" not in program
     assert "kprobe:__ptlrpc_free_req" not in program
-    assert "@target_device = 424242;" in program
+    assert "@target_major = 977;" in program
+    assert "@target_minor = 981636;" in program
+    assert "($dev >> 20) == @target_major" in program
+    assert "($dev & 1048575) == @target_minor" in program
     assert "@selected_mount_tid[tid] = 1;" in program
     assert "@tracked_req[arg0] = 1;" in program

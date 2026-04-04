@@ -116,7 +116,7 @@ def validate_lustre_mount_selection(
     realpath_fn: Any = os.path.realpath,
     stat_fn: Any = os.stat,
 ) -> None:
-    _ = resolve_lustre_mount_device(
+    _ = resolve_lustre_mount_identity(
         mount_path,
         mounts_text=mounts_text,
         realpath_fn=realpath_fn,
@@ -124,12 +124,12 @@ def validate_lustre_mount_selection(
     )
 
 
-def resolve_lustre_mount_device(
+def resolve_lustre_mount_identity(
     mount_path: str,
     mounts_text: str | None = None,
     realpath_fn: Any = os.path.realpath,
     stat_fn: Any = os.stat,
-) -> int:
+) -> tuple[int, int]:
     if mounts_text is None:
         mounts_text = Path("/proc/mounts").read_text()
 
@@ -149,7 +149,8 @@ def resolve_lustre_mount_device(
     if normalized_mount_path not in normalized_lustre_mounts:
         raise ValueError(f"mount path is not a lustre mount: {mount_path}")
 
-    return int(stat_fn(normalized_mount_path).st_dev)
+    device = int(stat_fn(normalized_mount_path).st_dev)
+    return (os.major(device), os.minor(device))
 
 
 def load_traceable_functions(text: str | None = None) -> set[str]:
@@ -263,7 +264,8 @@ class EventWindowAggregator:
 
 def build_bpftrace_program(
     mount_path: str,
-    target_device: int,
+    target_major: int,
+    target_minor: int,
     available_symbols: set[str] | None = None,
 ) -> str:
     if available_symbols is None:
@@ -278,18 +280,21 @@ def build_bpftrace_program(
         f"""
 BEGIN
 {{
-  @target_device = {target_device};
+  @target_major = {target_major};
+  @target_minor = {target_minor};
   printf("TRACE_START\\tmount={escaped_mount}\\n");
 }}
 
 kprobe:ll_lookup_nd
-/((struct inode *)arg0)->i_sb->s_dev == @target_device/
 {{
-  @ll_lookup_start[tid] = nsecs;
-  @ll_lookup_uid[tid] = uid;
-  @ll_lookup_pid[tid] = pid;
-  @ll_lookup_comm[tid] = comm;
-  @selected_mount_tid[tid] = 1;
+  $dev = ((struct inode *)arg0)->i_sb->s_dev;
+  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+    @ll_lookup_start[tid] = nsecs;
+    @ll_lookup_uid[tid] = uid;
+    @ll_lookup_pid[tid] = pid;
+    @ll_lookup_comm[tid] = comm;
+    @selected_mount_tid[tid] = 1;
+  }}
 }}
 
 kretprobe:ll_lookup_nd
@@ -305,13 +310,15 @@ kretprobe:ll_lookup_nd
 }}
 
 kprobe:ll_file_open
-/((struct inode *)arg0)->i_sb->s_dev == @target_device/
 {{
-  @ll_open_start[tid] = nsecs;
-  @ll_open_uid[tid] = uid;
-  @ll_open_pid[tid] = pid;
-  @ll_open_comm[tid] = comm;
-  @selected_mount_tid[tid] = 1;
+  $dev = ((struct inode *)arg0)->i_sb->s_dev;
+  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+    @ll_open_start[tid] = nsecs;
+    @ll_open_uid[tid] = uid;
+    @ll_open_pid[tid] = pid;
+    @ll_open_comm[tid] = comm;
+    @selected_mount_tid[tid] = 1;
+  }}
 }}
 
 kretprobe:ll_file_open
@@ -327,13 +334,15 @@ kretprobe:ll_file_open
 }}
 
 kprobe:ll_file_read_iter
-/((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev == @target_device/
 {{
-  @ll_read_start[tid] = nsecs;
-  @ll_read_uid[tid] = uid;
-  @ll_read_pid[tid] = pid;
-  @ll_read_comm[tid] = comm;
-  @selected_mount_tid[tid] = 1;
+  $dev = ((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev;
+  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+    @ll_read_start[tid] = nsecs;
+    @ll_read_uid[tid] = uid;
+    @ll_read_pid[tid] = pid;
+    @ll_read_comm[tid] = comm;
+    @selected_mount_tid[tid] = 1;
+  }}
 }}
 
 kretprobe:ll_file_read_iter
@@ -350,13 +359,15 @@ kretprobe:ll_file_read_iter
 }}
 
 kprobe:ll_file_write_iter
-/((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev == @target_device/
 {{
-  @ll_write_start[tid] = nsecs;
-  @ll_write_uid[tid] = uid;
-  @ll_write_pid[tid] = pid;
-  @ll_write_comm[tid] = comm;
-  @selected_mount_tid[tid] = 1;
+  $dev = ((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev;
+  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+    @ll_write_start[tid] = nsecs;
+    @ll_write_uid[tid] = uid;
+    @ll_write_pid[tid] = pid;
+    @ll_write_comm[tid] = comm;
+    @selected_mount_tid[tid] = 1;
+  }}
 }}
 
 kretprobe:ll_file_write_iter
@@ -373,13 +384,15 @@ kretprobe:ll_file_write_iter
 }}
 
 kprobe:ll_fsync
-/((struct file *)arg0)->f_inode->i_sb->s_dev == @target_device/
 {{
-  @ll_fsync_start[tid] = nsecs;
-  @ll_fsync_uid[tid] = uid;
-  @ll_fsync_pid[tid] = pid;
-  @ll_fsync_comm[tid] = comm;
-  @selected_mount_tid[tid] = 1;
+  $dev = ((struct file *)arg0)->f_inode->i_sb->s_dev;
+  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+    @ll_fsync_start[tid] = nsecs;
+    @ll_fsync_uid[tid] = uid;
+    @ll_fsync_pid[tid] = pid;
+    @ll_fsync_comm[tid] = comm;
+    @selected_mount_tid[tid] = 1;
+  }}
 }}
 
 kretprobe:ll_fsync
@@ -554,7 +567,7 @@ def _drain_stderr(stderr: Any) -> None:
 def run_observer(args: argparse.Namespace) -> int:
     aggregator = EventWindowAggregator()
     exporter: OpenTelemetryMetricExporter | None = None
-    target_device = resolve_lustre_mount_device(args.mount)
+    target_major, target_minor = resolve_lustre_mount_identity(args.mount)
     available_symbols = load_traceable_functions()
     if not args.dry_run:
         if not args.collector_endpoint:
@@ -570,7 +583,8 @@ def run_observer(args: argparse.Namespace) -> int:
         program_file.write(
             build_bpftrace_program(
                 args.mount,
-                target_device=target_device,
+                target_major=target_major,
+                target_minor=target_minor,
                 available_symbols=available_symbols,
             )
         )
