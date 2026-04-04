@@ -20,3 +20,4 @@ start_instance "${CLIENT_INSTANCE}" "${CLIENT_TEMPLATE}"
 
 "${SCRIPT_DIR}/provision-hosts.sh"
 "${SCRIPT_DIR}/verify-cluster.sh"
+"${SCRIPT_DIR}/verify-observer.sh"

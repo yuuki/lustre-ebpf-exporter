@@ -26,9 +26,11 @@ def test_expected_lima_e2e_files_exist() -> None:
         "e2e/lima/scripts/destroy.sh",
         "e2e/lima/scripts/provision-hosts.sh",
         "e2e/lima/scripts/verify-cluster.sh",
+        "e2e/lima/scripts/verify-observer.sh",
         "e2e/lima/guest/common.sh",
         "e2e/lima/guest/server-setup.sh",
         "e2e/lima/guest/client-setup.sh",
+        "tools/lustre_client_trace.sh",
     ]
 
     for relpath in expected:
@@ -202,6 +204,39 @@ def test_client_package_install_prefers_prebuilt_kmods_with_dkms_fallback() -> N
     assert installed_skip_block in client
     assert prebuilt_install_block in client
     assert dkms_fallback_block in client
+    assert 'dnf install -y bpftrace' in client
+
+
+def test_minimal_client_observer_uses_bpftrace_tracepoints() -> None:
+    script = read_text("tools/lustre_client_trace.sh")
+
+    assert "bpftrace" in script
+    assert "tracepoint:syscalls:sys_enter_openat" in script
+    assert "tracepoint:syscalls:sys_exit_openat" in script
+    assert "tracepoint:syscalls:sys_enter_write" in script
+    assert "tracepoint:syscalls:sys_exit_write" in script
+    assert "tracepoint:syscalls:sys_enter_close" in script
+    assert 'printf("EVENT\\\\topen' in script
+    assert 'printf("EVENT\\\\twrite' in script
+    assert 'printf("EVENT\\\\tclose' in script
+    assert "pid" in script
+    assert "uid" in script
+    assert "comm" in script
+
+
+def test_verify_observer_script_runs_tracer_and_asserts_process_metadata() -> None:
+    script = read_text("e2e/lima/scripts/verify-observer.sh")
+
+    assert "lustre_client_trace.sh" in script
+    assert "^EVENT[[:space:]]+open[[:space:]]" in script
+    assert "^EVENT[[:space:]]+close[[:space:]]" in script
+    assert "^EVENT[[:space:]]+write[[:space:]]" in script
+    assert "^EVENT[[:space:]]+read[[:space:]]" in script
+    assert "if ! grep -Eq" in script
+    assert "pid=" in script
+    assert "uid=" in script
+    assert "comm=" in script
+    assert "trace.log" in script
 
 
 def test_provision_hosts_retries_guest_setup_after_kernel_switch_reboot() -> None:

@@ -44,6 +44,9 @@ elif ! dnf install -y \
     lustre-client
 fi
 
+log "installing client-side observability dependencies"
+dnf install -y bpftrace
+
 iface="$(primary_interface)"
 configure_lnet "${iface}"
 ensure_hosts_entry "${SERVER_IP}" "${SERVER_HOST_ALIAS}"
