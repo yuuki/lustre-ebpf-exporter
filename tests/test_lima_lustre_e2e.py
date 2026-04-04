@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def read_text(relpath: str) -> str:
@@ -18,6 +21,8 @@ def read_yaml(relpath: str) -> dict:
 
 def test_expected_lima_e2e_files_exist() -> None:
     expected = [
+        "README.md",
+        "requirements-observer.txt",
         "e2e/lima/README.md",
         "e2e/lima/config/lustre-2.14.0.env",
         "e2e/lima/templates/lustre-server.yaml",
@@ -30,6 +35,7 @@ def test_expected_lima_e2e_files_exist() -> None:
         "e2e/lima/guest/common.sh",
         "e2e/lima/guest/server-setup.sh",
         "e2e/lima/guest/client-setup.sh",
+        "tools/lustre_client_observer.py",
         "tools/lustre_client_trace.sh",
     ]
 
@@ -204,39 +210,63 @@ def test_client_package_install_prefers_prebuilt_kmods_with_dkms_fallback() -> N
     assert installed_skip_block in client
     assert prebuilt_install_block in client
     assert dkms_fallback_block in client
-    assert 'dnf install -y bpftrace' in client
+    assert 'dnf install -y \\\n  bpftrace \\\n  python3 \\\n  python3-pip' in client
+    assert 'python3 -m pip install --upgrade pip' in client
+    assert 'python3 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"' in client
 
 
-def test_minimal_client_observer_uses_bpftrace_tracepoints() -> None:
+def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
+    from lustre_client_observer.agent import build_bpftrace_program
+
+    program = build_bpftrace_program("/mnt/lustre")
+
+    assert 'printf("TRACE_START\\tmount=/mnt/lustre\\n");' in program
+    assert "kprobe:ll_lookup_nd" in program
+    assert "kretprobe:ll_lookup_nd" in program
+    assert "kprobe:ll_file_open" in program
+    assert "kretprobe:ll_file_read_iter" in program
+    assert "kretprobe:ll_file_write_iter" in program
+    assert "kprobe:ll_fsync" in program
+    assert "kprobe:ptlrpc_send_new_req" in program
+    assert "kprobe:ptlrpc_queue_wait" in program
+    assert "kretprobe:ptlrpc_queue_wait" in program
+    assert "kprobe:__ptlrpc_free_req" in program
+    assert 'plane=llite' in program
+    assert 'plane=ptlrpc' in program
+
+
+def test_client_observer_wrapper_executes_python_agent() -> None:
     script = read_text("tools/lustre_client_trace.sh")
 
-    assert "bpftrace" in script
-    assert "tracepoint:syscalls:sys_enter_openat" in script
-    assert "tracepoint:syscalls:sys_exit_openat" in script
-    assert "tracepoint:syscalls:sys_enter_write" in script
-    assert "tracepoint:syscalls:sys_exit_write" in script
-    assert "tracepoint:syscalls:sys_enter_close" in script
-    assert 'printf("EVENT\\\\topen' in script
-    assert 'printf("EVENT\\\\twrite' in script
-    assert 'printf("EVENT\\\\tclose' in script
-    assert "pid" in script
-    assert "uid" in script
-    assert "comm" in script
+    assert "lustre_client_observer.py" in script
+    assert "python3" in script
+    assert "--collector-endpoint" in script
+    assert "--dry-run" in script
 
 
-def test_verify_observer_script_runs_tracer_and_asserts_process_metadata() -> None:
+def test_verify_observer_script_runs_aggregated_observer_dry_run() -> None:
     script = read_text("e2e/lima/scripts/verify-observer.sh")
 
     assert "lustre_client_trace.sh" in script
-    assert "^EVENT[[:space:]]+open[[:space:]]" in script
-    assert "^EVENT[[:space:]]+close[[:space:]]" in script
-    assert "^EVENT[[:space:]]+write[[:space:]]" in script
-    assert "^EVENT[[:space:]]+read[[:space:]]" in script
+    assert "--dry-run" in script
+    assert "lustre.client.access.operations" in script
+    assert "lustre.client.access.duration" in script
+    assert "lustre.client.data.bytes" in script
     assert "if ! grep -Eq" in script
-    assert "pid=" in script
-    assert "uid=" in script
-    assert "comm=" in script
     assert "trace.log" in script
+    assert "lustre.client.rpc.wait.duration" not in script
+    assert "lustre.client.rpc.wait.operations" not in script
+
+
+def test_root_readme_documents_observer_architecture() -> None:
+    readme = read_text("README.md")
+
+    assert "lustre-client-observer" in readme
+    assert "llite" in readme
+    assert "PtlRPC" in readme
+    assert "OpenTelemetry Metrics" in readme
+    assert "lustre.client.access.operations" in readme
+    assert "lustre.client.rpc.wait.duration" in readme
 
 
 def test_provision_hosts_retries_guest_setup_after_kernel_switch_reboot() -> None:
