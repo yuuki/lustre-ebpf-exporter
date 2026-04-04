@@ -218,9 +218,10 @@ def test_client_package_install_prefers_prebuilt_kmods_with_dkms_fallback() -> N
 def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
     from lustre_client_observer.agent import build_bpftrace_program
 
-    program = build_bpftrace_program("/mnt/lustre")
+    program = build_bpftrace_program("/mnt/lustre", target_device=1)
 
     assert 'printf("TRACE_START\\tmount=/mnt/lustre\\n");' in program
+    assert "@target_device = 1;" in program
     assert "kprobe:ll_lookup_nd" in program
     assert "kretprobe:ll_lookup_nd" in program
     assert "kprobe:ll_file_open" in program

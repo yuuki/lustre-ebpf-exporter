@@ -15,6 +15,7 @@ from lustre_client_observer.agent import (
     classify_actor_type,
     load_traceable_functions,
     parse_event_line,
+    resolve_lustre_mount_device,
     validate_lustre_mount_selection,
 )
 
@@ -150,24 +151,62 @@ def test_inflight_requests_uses_single_attribute_set_for_send_and_free() -> None
     ) in metrics
 
 
-def test_validate_lustre_mount_selection_requires_single_lustre_mount() -> None:
+def test_validate_lustre_mount_selection_accepts_matching_mount_with_multiple_lustre_mounts() -> None:
     mounts_text = (
         "10.0.0.1@tcp:/fs1 /mnt/lustre1 lustre rw 0 0\n"
         "10.0.0.1@tcp:/fs2 /mnt/lustre2 lustre rw 0 0\n"
     )
 
-    try:
-        validate_lustre_mount_selection("/mnt/lustre1", mounts_text=mounts_text)
-    except ValueError as exc:
-        assert "multiple lustre mounts" in str(exc)
-    else:
-        raise AssertionError("expected multi-mount configuration to be rejected")
+    class FakeStat:
+        st_dev = 1
+
+    validate_lustre_mount_selection(
+        "/mnt/lustre1",
+        mounts_text=mounts_text,
+        realpath_fn=lambda path: path,
+        stat_fn=lambda path: FakeStat(),
+    )
 
 
 def test_validate_lustre_mount_selection_accepts_single_matching_mount() -> None:
     mounts_text = "10.0.0.1@tcp:/fs1 /mnt/lustre lustre rw 0 0\n"
 
-    validate_lustre_mount_selection("/mnt/lustre", mounts_text=mounts_text)
+    class FakeStat:
+        st_dev = 1
+
+    validate_lustre_mount_selection(
+        "/mnt/lustre",
+        mounts_text=mounts_text,
+        realpath_fn=lambda path: path,
+        stat_fn=lambda path: FakeStat(),
+    )
+
+
+def test_resolve_lustre_mount_device_uses_stat_device_value() -> None:
+    class FakeStat:
+        st_dev = 424242
+
+    def fake_realpath(path: str) -> str:
+        return path
+
+    def fake_stat(path: str) -> FakeStat:
+        assert path == "/mnt/lustre1"
+        return FakeStat()
+
+    mounts_text = (
+        "10.0.0.1@tcp:/fs1 /mnt/lustre1 lustre rw 0 0\n"
+        "10.0.0.1@tcp:/fs2 /mnt/lustre2 lustre rw 0 0\n"
+    )
+
+    assert (
+        resolve_lustre_mount_device(
+            "/mnt/lustre1",
+            mounts_text=mounts_text,
+            realpath_fn=fake_realpath,
+            stat_fn=fake_stat,
+        )
+        == 424242
+    )
 
 
 def test_observer_cli_help_runs_from_tools_entrypoint() -> None:
@@ -195,6 +234,7 @@ def test_load_traceable_functions_parses_function_names() -> None:
 def test_build_bpftrace_program_skips_missing_optional_ptlrpc_probes() -> None:
     program = build_bpftrace_program(
         "/mnt/lustre",
+        target_device=424242,
         available_symbols={
             "ll_lookup_nd",
             "ll_file_open",
@@ -208,3 +248,6 @@ def test_build_bpftrace_program_skips_missing_optional_ptlrpc_probes() -> None:
     assert "kprobe:ptlrpc_queue_wait" in program
     assert "kprobe:ptlrpc_send_new_req" not in program
     assert "kprobe:__ptlrpc_free_req" not in program
+    assert "@target_device = 424242;" in program
+    assert "@selected_mount_tid[tid] = 1;" in program
+    assert "@tracked_req[arg0] = 1;" in program

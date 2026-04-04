@@ -110,7 +110,26 @@ def parse_event_line(line: str) -> EventRecord:
     )
 
 
-def validate_lustre_mount_selection(mount_path: str, mounts_text: str | None = None) -> None:
+def validate_lustre_mount_selection(
+    mount_path: str,
+    mounts_text: str | None = None,
+    realpath_fn: Any = os.path.realpath,
+    stat_fn: Any = os.stat,
+) -> None:
+    _ = resolve_lustre_mount_device(
+        mount_path,
+        mounts_text=mounts_text,
+        realpath_fn=realpath_fn,
+        stat_fn=stat_fn,
+    )
+
+
+def resolve_lustre_mount_device(
+    mount_path: str,
+    mounts_text: str | None = None,
+    realpath_fn: Any = os.path.realpath,
+    stat_fn: Any = os.stat,
+) -> int:
     if mounts_text is None:
         mounts_text = Path("/proc/mounts").read_text()
 
@@ -124,16 +143,13 @@ def validate_lustre_mount_selection(mount_path: str, mounts_text: str | None = N
     if not lustre_mounts:
         raise ValueError("no lustre mounts found in /proc/mounts")
 
-    normalized_mount_path = os.path.realpath(mount_path)
-    normalized_lustre_mounts = [os.path.realpath(item) for item in lustre_mounts]
+    normalized_mount_path = realpath_fn(mount_path)
+    normalized_lustre_mounts = [realpath_fn(item) for item in lustre_mounts]
 
     if normalized_mount_path not in normalized_lustre_mounts:
         raise ValueError(f"mount path is not a lustre mount: {mount_path}")
 
-    if len(normalized_lustre_mounts) > 1:
-        raise ValueError(
-            "multiple lustre mounts detected; this MVP cannot filter llite/PTLRPC events per mount"
-        )
+    return int(stat_fn(normalized_mount_path).st_dev)
 
 
 def load_traceable_functions(text: str | None = None) -> set[str]:
@@ -245,7 +261,11 @@ class EventWindowAggregator:
         return metrics
 
 
-def build_bpftrace_program(mount_path: str, available_symbols: set[str] | None = None) -> str:
+def build_bpftrace_program(
+    mount_path: str,
+    target_device: int,
+    available_symbols: set[str] | None = None,
+) -> str:
     if available_symbols is None:
         available_symbols = REQUIRED_TRACEABLE_SYMBOLS | OPTIONAL_TRACEABLE_SYMBOLS
 
@@ -258,15 +278,18 @@ def build_bpftrace_program(mount_path: str, available_symbols: set[str] | None =
         f"""
 BEGIN
 {{
+  @target_device = {target_device};
   printf("TRACE_START\\tmount={escaped_mount}\\n");
 }}
 
 kprobe:ll_lookup_nd
+/((struct inode *)arg0)->i_sb->s_dev == @target_device/
 {{
   @ll_lookup_start[tid] = nsecs;
   @ll_lookup_uid[tid] = uid;
   @ll_lookup_pid[tid] = pid;
   @ll_lookup_comm[tid] = comm;
+  @selected_mount_tid[tid] = 1;
 }}
 
 kretprobe:ll_lookup_nd
@@ -278,14 +301,17 @@ kretprobe:ll_lookup_nd
   delete(@ll_lookup_uid[tid]);
   delete(@ll_lookup_pid[tid]);
   delete(@ll_lookup_comm[tid]);
+  delete(@selected_mount_tid[tid]);
 }}
 
 kprobe:ll_file_open
+/((struct inode *)arg0)->i_sb->s_dev == @target_device/
 {{
   @ll_open_start[tid] = nsecs;
   @ll_open_uid[tid] = uid;
   @ll_open_pid[tid] = pid;
   @ll_open_comm[tid] = comm;
+  @selected_mount_tid[tid] = 1;
 }}
 
 kretprobe:ll_file_open
@@ -297,14 +323,17 @@ kretprobe:ll_file_open
   delete(@ll_open_uid[tid]);
   delete(@ll_open_pid[tid]);
   delete(@ll_open_comm[tid]);
+  delete(@selected_mount_tid[tid]);
 }}
 
 kprobe:ll_file_read_iter
+/((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev == @target_device/
 {{
   @ll_read_start[tid] = nsecs;
   @ll_read_uid[tid] = uid;
   @ll_read_pid[tid] = pid;
   @ll_read_comm[tid] = comm;
+  @selected_mount_tid[tid] = 1;
 }}
 
 kretprobe:ll_file_read_iter
@@ -317,14 +346,17 @@ kretprobe:ll_file_read_iter
   delete(@ll_read_uid[tid]);
   delete(@ll_read_pid[tid]);
   delete(@ll_read_comm[tid]);
+  delete(@selected_mount_tid[tid]);
 }}
 
 kprobe:ll_file_write_iter
+/((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev == @target_device/
 {{
   @ll_write_start[tid] = nsecs;
   @ll_write_uid[tid] = uid;
   @ll_write_pid[tid] = pid;
   @ll_write_comm[tid] = comm;
+  @selected_mount_tid[tid] = 1;
 }}
 
 kretprobe:ll_file_write_iter
@@ -337,14 +369,17 @@ kretprobe:ll_file_write_iter
   delete(@ll_write_uid[tid]);
   delete(@ll_write_pid[tid]);
   delete(@ll_write_comm[tid]);
+  delete(@selected_mount_tid[tid]);
 }}
 
 kprobe:ll_fsync
+/((struct file *)arg0)->f_inode->i_sb->s_dev == @target_device/
 {{
   @ll_fsync_start[tid] = nsecs;
   @ll_fsync_uid[tid] = uid;
   @ll_fsync_pid[tid] = pid;
   @ll_fsync_comm[tid] = comm;
+  @selected_mount_tid[tid] = 1;
 }}
 
 kretprobe:ll_fsync
@@ -356,15 +391,18 @@ kretprobe:ll_fsync
   delete(@ll_fsync_uid[tid]);
   delete(@ll_fsync_pid[tid]);
   delete(@ll_fsync_comm[tid]);
+  delete(@selected_mount_tid[tid]);
 }}
 
 kprobe:ptlrpc_queue_wait
+/@tracked_req[arg0] || @selected_mount_tid[tid]/
 {{
   @rpc_wait_start[tid] = nsecs;
   @rpc_wait_uid[tid] = uid;
   @rpc_wait_pid[tid] = pid;
   @rpc_wait_comm[tid] = comm;
   @rpc_wait_req[tid] = arg0;
+  @tracked_req[arg0] = 1;
 }}
 
 kretprobe:ptlrpc_queue_wait
@@ -385,7 +423,9 @@ kretprobe:ptlrpc_queue_wait
         sections.append(
             """
 kprobe:ptlrpc_send_new_req
+/@selected_mount_tid[tid]/
 {
+  @tracked_req[arg0] = 1;
   printf("EVENT\\tplane=ptlrpc\\top=send_new_req\\tuid=%d\\tpid=%d\\tcomm=%s\\tduration_us=0\\tsize_bytes=0\\trequest_ptr=0x%llx\\n",
     uid, pid, comm, arg0);
 }
@@ -396,9 +436,11 @@ kprobe:ptlrpc_send_new_req
         sections.append(
             """
 kprobe:__ptlrpc_free_req
+/@tracked_req[arg0]/
 {
   printf("EVENT\\tplane=ptlrpc\\top=free_req\\tuid=%d\\tpid=%d\\tcomm=%s\\tduration_us=0\\tsize_bytes=0\\trequest_ptr=0x%llx\\n",
     uid, pid, comm, arg0);
+  delete(@tracked_req[arg0]);
 }
 """.strip()
         )
@@ -512,7 +554,7 @@ def _drain_stderr(stderr: Any) -> None:
 def run_observer(args: argparse.Namespace) -> int:
     aggregator = EventWindowAggregator()
     exporter: OpenTelemetryMetricExporter | None = None
-    validate_lustre_mount_selection(args.mount)
+    target_device = resolve_lustre_mount_device(args.mount)
     available_symbols = load_traceable_functions()
     if not args.dry_run:
         if not args.collector_endpoint:
@@ -525,7 +567,13 @@ def run_observer(args: argparse.Namespace) -> int:
     program_file = tempfile.NamedTemporaryFile("w", suffix=".bt", delete=False)
     program_path = Path(program_file.name)
     try:
-        program_file.write(build_bpftrace_program(args.mount, available_symbols=available_symbols))
+        program_file.write(
+            build_bpftrace_program(
+                args.mount,
+                target_device=target_device,
+                available_symbols=available_symbols,
+            )
+        )
         program_file.flush()
         program_file.close()
 
