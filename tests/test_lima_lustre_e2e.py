@@ -221,8 +221,10 @@ def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
     program = build_bpftrace_program("/mnt/lustre", target_major=1, target_minor=2)
 
     assert 'printf("TRACE_START\\tmount=/mnt/lustre\\n");' in program
-    assert "@target_major = 1;" in program
-    assert "@target_minor = 2;" in program
+    assert "@target_major" not in program
+    assert "@target_minor" not in program
+    assert "$target_major = (uint64)1;" in program
+    assert "$target_minor = (uint64)2;" in program
     assert "kprobe:ll_lookup_nd" in program
     assert "kretprobe:ll_lookup_nd" in program
     assert "kprobe:ll_file_open" in program

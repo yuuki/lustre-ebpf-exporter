@@ -250,9 +250,11 @@ def test_build_bpftrace_program_skips_missing_optional_ptlrpc_probes() -> None:
     assert "kprobe:ptlrpc_queue_wait" in program
     assert "kprobe:ptlrpc_send_new_req" not in program
     assert "kprobe:__ptlrpc_free_req" not in program
-    assert "@target_major = 977;" in program
-    assert "@target_minor = 981636;" in program
-    assert "($dev >> 20) == @target_major" in program
-    assert "($dev & 1048575) == @target_minor" in program
+    assert "@target_major" not in program
+    assert "@target_minor" not in program
+    assert "$target_major = (uint64)977;" in program
+    assert "$target_minor = (uint64)981636;" in program
+    assert "($dev >> 20) == $target_major" in program
+    assert "($dev & 1048575) == $target_minor" in program
     assert "@selected_mount_tid[tid] = 1;" in program
     assert "@tracked_req[arg0] = 1;" in program

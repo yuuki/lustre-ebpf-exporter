@@ -276,19 +276,20 @@ def build_bpftrace_program(
         raise ValueError(f"required traceable functions are missing: {', '.join(missing_required)}")
 
     escaped_mount = mount_path.replace("\\", "\\\\").replace('"', '\\"')
+    mount_filter = f"""  $target_major = (uint64){target_major};
+  $target_minor = (uint64){target_minor};
+  if (($dev >> 20) == $target_major && ($dev & 1048575) == $target_minor) {{"""
     sections = [
         f"""
 BEGIN
 {{
-  @target_major = {target_major};
-  @target_minor = {target_minor};
   printf("TRACE_START\\tmount={escaped_mount}\\n");
 }}
 
 kprobe:ll_lookup_nd
 {{
   $dev = ((struct inode *)arg0)->i_sb->s_dev;
-  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+{mount_filter}
     @ll_lookup_start[tid] = nsecs;
     @ll_lookup_uid[tid] = uid;
     @ll_lookup_pid[tid] = pid;
@@ -312,7 +313,7 @@ kretprobe:ll_lookup_nd
 kprobe:ll_file_open
 {{
   $dev = ((struct inode *)arg0)->i_sb->s_dev;
-  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+{mount_filter}
     @ll_open_start[tid] = nsecs;
     @ll_open_uid[tid] = uid;
     @ll_open_pid[tid] = pid;
@@ -336,7 +337,7 @@ kretprobe:ll_file_open
 kprobe:ll_file_read_iter
 {{
   $dev = ((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev;
-  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+{mount_filter}
     @ll_read_start[tid] = nsecs;
     @ll_read_uid[tid] = uid;
     @ll_read_pid[tid] = pid;
@@ -361,7 +362,7 @@ kretprobe:ll_file_read_iter
 kprobe:ll_file_write_iter
 {{
   $dev = ((struct kiocb *)arg0)->ki_filp->f_inode->i_sb->s_dev;
-  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+{mount_filter}
     @ll_write_start[tid] = nsecs;
     @ll_write_uid[tid] = uid;
     @ll_write_pid[tid] = pid;
@@ -386,7 +387,7 @@ kretprobe:ll_file_write_iter
 kprobe:ll_fsync
 {{
   $dev = ((struct file *)arg0)->f_inode->i_sb->s_dev;
-  if (($dev >> 20) == @target_major && ($dev & 1048575) == @target_minor) {{
+{mount_filter}
     @ll_fsync_start[tid] = nsecs;
     @ll_fsync_uid[tid] = uid;
     @ll_fsync_pid[tid] = pid;
