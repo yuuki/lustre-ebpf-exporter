@@ -245,6 +245,8 @@ def test_client_observer_wrapper_executes_python_agent() -> None:
     assert "lustre_client_observer/agent.py" in script
     assert "python3.9" in script
     assert "python3" in script
+    assert "--prometheus-listen-address" in script
+    assert "--prometheus-listen-port" in script
     assert "--collector-endpoint" in script
     assert "--dry-run" in script
 
@@ -269,9 +271,9 @@ def test_root_readme_documents_observer_architecture() -> None:
     assert "lustre-client-observer" in readme
     assert "llite" in readme
     assert "PtlRPC" in readme
-    assert "OpenTelemetry Metrics" in readme
-    assert "lustre.client.access.operations" in readme
-    assert "lustre.client.rpc.wait.duration" in readme
+    assert "Prometheus Exporter" in readme
+    assert "lustre_client_access_operations_total" in readme
+    assert "lustre_client_rpc_wait_duration_seconds" in readme
 
 
 def test_provision_hosts_retries_guest_setup_after_kernel_switch_reboot() -> None:

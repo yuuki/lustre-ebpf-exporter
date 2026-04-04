@@ -12,6 +12,8 @@ if str(ROOT) not in sys.path:
 from lustre_client_observer.agent import (
     AggregatedMetric,
     EventWindowAggregator,
+    PrometheusMetricExporter,
+    build_arg_parser,
     build_bpftrace_program,
     classify_actor_type,
     load_traceable_functions,
@@ -150,6 +152,122 @@ def test_inflight_requests_uses_single_attribute_set_for_send_and_free() -> None
             "lustre.actor.type": "user",
         },
     ) in metrics
+
+
+def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() -> None:
+    exporter = PrometheusMetricExporter(
+        listen_address="127.0.0.1",
+        listen_port=0,
+        resource_attributes={
+            "lustre.fs.name": "lustrefs",
+            "lustre.client.mount": "/mnt/lustre",
+        },
+        start_server=False,
+    )
+    try:
+        exporter.export(
+            [
+                AggregatedMetric(
+                    name="lustre.client.access.operations",
+                    value=2,
+                    unit="1",
+                    metric_type="counter",
+                    attributes={
+                        "user.id": "1001",
+                        "process.name": "dd",
+                        "lustre.access.class": "data",
+                        "lustre.access.op": "write",
+                        "lustre.actor.type": "user",
+                    },
+                ),
+                AggregatedMetric(
+                    name="lustre.client.access.duration",
+                    value=[250, 500],
+                    unit="us",
+                    metric_type="histogram",
+                    attributes={
+                        "user.id": "1001",
+                        "process.name": "dd",
+                        "lustre.access.class": "data",
+                        "lustre.access.op": "write",
+                        "lustre.actor.type": "user",
+                    },
+                ),
+                AggregatedMetric(
+                    name="lustre.client.data.bytes",
+                    value=1572864,
+                    unit="By",
+                    metric_type="counter",
+                    attributes={
+                        "user.id": "1001",
+                        "process.name": "dd",
+                        "lustre.access.class": "data",
+                        "lustre.access.op": "write",
+                        "lustre.actor.type": "user",
+                    },
+                ),
+                AggregatedMetric(
+                    name="lustre.client.rpc.wait.operations",
+                    value=3,
+                    unit="1",
+                    metric_type="counter",
+                    attributes={
+                        "user.id": "1001",
+                        "process.name": "dd",
+                        "lustre.access.op": "queue_wait",
+                        "lustre.actor.type": "user",
+                    },
+                ),
+                AggregatedMetric(
+                    name="lustre.client.rpc.wait.duration",
+                    value=[100, 200],
+                    unit="us",
+                    metric_type="histogram",
+                    attributes={
+                        "user.id": "1001",
+                        "process.name": "dd",
+                        "lustre.access.op": "queue_wait",
+                        "lustre.actor.type": "user",
+                    },
+                ),
+                AggregatedMetric(
+                    name="lustre.client.inflight.requests",
+                    value=-1,
+                    unit="1",
+                    metric_type="updowncounter",
+                    attributes={
+                        "user.id": "1001",
+                        "process.name": "dd",
+                        "lustre.actor.type": "user",
+                    },
+                ),
+            ]
+        )
+
+        text = exporter.render_text()
+    finally:
+        exporter.shutdown()
+
+    assert 'lustre_client_access_operations_total{access_class="data",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 2.0' in text
+    assert "lustre_client_access_duration_seconds_bucket" in text
+    assert 'access_class="data"' in text
+    assert 'mount="/mnt/lustre"' in text
+    assert 'op="write"' in text
+    assert "lustre_client_access_duration_seconds_sum" in text
+    assert "0.00075" in text
+    assert 'lustre_client_data_bytes_total{access_class="data",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 1.572864e+06' in text
+    assert 'lustre_client_rpc_wait_operations_total{actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="queue_wait",process="dd",uid="1001"} 3.0' in text
+    assert "lustre_client_rpc_wait_duration_seconds_sum" in text
+    assert 'lustre_client_inflight_requests{actor_type="user",fs="lustrefs",mount="/mnt/lustre",process="dd",uid="1001"} -1.0' in text
+
+
+def test_arg_parser_defaults_to_prometheus_exporter() -> None:
+    args = build_arg_parser().parse_args([])
+
+    assert args.prometheus_listen_address == "0.0.0.0"
+    assert args.prometheus_listen_port == 9108
+    assert args.collector_endpoint == ""
+    assert args.dry_run is False
 
 
 def test_validate_lustre_mount_selection_accepts_matching_mount_with_multiple_lustre_mounts() -> None:

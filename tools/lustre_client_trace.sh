@@ -4,11 +4,13 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage: lustre_client_trace.sh [--mount /mnt/lustre] [--duration 15] [--window-seconds 10]
+                             [--prometheus-listen-address 0.0.0.0]
+                             [--prometheus-listen-port 9108]
                              [--collector-endpoint http://collector:4318/v1/metrics]
                              [--dry-run]
 
 Compatibility wrapper for the Python-based Lustre client observer MVP.
-By default it exports OTLP metrics. Use --dry-run to print aggregated JSON metrics.
+By default it publishes Prometheus metrics. Use --collector-endpoint to mirror OTLP metrics and --dry-run to print aggregated JSON metrics.
 EOF
 }
 
@@ -87,11 +89,6 @@ python_cmd="$(find_python)" || {
 
 if [[ ! -d "${mount_path}" ]]; then
   echo "mount path does not exist: ${mount_path}" >&2
-  exit 1
-fi
-
-if [[ "${dry_run}" -eq 0 && -z "${collector_endpoint}" ]]; then
-  echo "--collector-endpoint is required unless --dry-run is set" >&2
   exit 1
 fi
 

@@ -15,6 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from wsgiref.simple_server import make_server
 
 
 LLITE_METADATA_OPS = {"lookup", "open", "rename", "unlink", "mkdir", "rmdir"}
@@ -63,6 +64,27 @@ class AggregatedMetric:
     unit: str
     metric_type: str
     attributes: dict[str, str]
+
+
+PROMETHEUS_LATENCY_BUCKETS_SECONDS = (
+    5e-6,
+    1e-5,
+    2.5e-5,
+    5e-5,
+    1e-4,
+    2.5e-4,
+    5e-4,
+    1e-3,
+    2.5e-3,
+    5e-3,
+    1e-2,
+    2.5e-2,
+    5e-2,
+    1e-1,
+    2.5e-1,
+    5e-1,
+    1.0,
+)
 
 
 def classify_actor_type(comm: str) -> str:
@@ -477,6 +499,120 @@ def emit_metrics_json(metrics: list[AggregatedMetric], stream: Any) -> None:
     stream.flush()
 
 
+class PrometheusMetricExporter:
+    def __init__(
+        self,
+        listen_address: str,
+        listen_port: int,
+        resource_attributes: dict[str, str],
+        start_server: bool = True,
+    ) -> None:
+        from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, make_wsgi_app
+
+        self._registry = CollectorRegistry()
+        self._static_labels = {
+            "fs": resource_attributes["lustre.fs.name"],
+            "mount": resource_attributes["lustre.client.mount"],
+        }
+        self._server = None
+        self._server_thread: threading.Thread | None = None
+
+        access_label_names = ("fs", "mount", "access_class", "op", "uid", "process", "actor_type")
+        rpc_label_names = ("fs", "mount", "op", "uid", "process", "actor_type")
+        inflight_label_names = ("fs", "mount", "uid", "process", "actor_type")
+
+        self._counters = {
+            "lustre.client.access.operations": Counter(
+                "lustre_client_access_operations_total",
+                "Aggregated llite access operation count",
+                labelnames=access_label_names,
+                registry=self._registry,
+            ),
+            "lustre.client.data.bytes": Counter(
+                "lustre_client_data_bytes_total",
+                "Aggregated llite data volume in bytes",
+                labelnames=access_label_names,
+                registry=self._registry,
+            ),
+            "lustre.client.rpc.wait.operations": Counter(
+                "lustre_client_rpc_wait_operations_total",
+                "Aggregated ptlrpc queue wait count",
+                labelnames=rpc_label_names,
+                registry=self._registry,
+            ),
+        }
+        self._histograms = {
+            "lustre.client.access.duration": Histogram(
+                "lustre_client_access_duration_seconds",
+                "Aggregated llite access latency in seconds",
+                labelnames=access_label_names,
+                buckets=PROMETHEUS_LATENCY_BUCKETS_SECONDS,
+                registry=self._registry,
+            ),
+            "lustre.client.rpc.wait.duration": Histogram(
+                "lustre_client_rpc_wait_duration_seconds",
+                "Aggregated ptlrpc queue wait latency in seconds",
+                labelnames=rpc_label_names,
+                buckets=PROMETHEUS_LATENCY_BUCKETS_SECONDS,
+                registry=self._registry,
+            ),
+        }
+        self._gauges = {
+            "lustre.client.inflight.requests": Gauge(
+                "lustre_client_inflight_requests",
+                "Net tracked ptlrpc requests",
+                labelnames=inflight_label_names,
+                registry=self._registry,
+            ),
+        }
+
+        if start_server:
+            self._server = make_server(listen_address, listen_port, make_wsgi_app(self._registry))
+            self._server_thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+            self._server_thread.start()
+
+    def _prometheus_labels(self, metric: AggregatedMetric) -> dict[str, str]:
+        labels = {
+            "fs": self._static_labels["fs"],
+            "mount": self._static_labels["mount"],
+            "uid": metric.attributes["user.id"],
+            "process": metric.attributes["process.name"],
+            "actor_type": metric.attributes["lustre.actor.type"],
+        }
+        if "lustre.access.class" in metric.attributes:
+            labels["access_class"] = metric.attributes["lustre.access.class"]
+        if "lustre.access.op" in metric.attributes:
+            labels["op"] = metric.attributes["lustre.access.op"]
+        return labels
+
+    def export(self, metrics: list[AggregatedMetric]) -> None:
+        for metric in metrics:
+            labels = self._prometheus_labels(metric)
+            if metric.metric_type == "counter":
+                self._counters[metric.name].labels(**labels).inc(float(metric.value))
+                continue
+            if metric.metric_type == "updowncounter":
+                self._gauges[metric.name].labels(**labels).inc(float(metric.value))
+                continue
+            if metric.metric_type == "histogram":
+                for value in metric.value:
+                    self._histograms[metric.name].labels(**labels).observe(float(value) / 1_000_000.0)
+
+    def render_text(self) -> str:
+        from prometheus_client import generate_latest
+
+        return generate_latest(self._registry).decode()
+
+    def shutdown(self) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+            self._server = None
+        if self._server_thread is not None:
+            self._server_thread.join(timeout=5)
+            self._server_thread = None
+
+
 class OpenTelemetryMetricExporter:
     def __init__(self, endpoint: str, resource_attributes: dict[str, str]) -> None:
         from opentelemetry import metrics
@@ -567,16 +703,30 @@ def _drain_stderr(stderr: Any) -> None:
 
 def run_observer(args: argparse.Namespace) -> int:
     aggregator = EventWindowAggregator()
-    exporter: OpenTelemetryMetricExporter | None = None
+    exporters: list[Any] = []
     target_major, target_minor = resolve_lustre_mount_identity(args.mount)
     available_symbols = load_traceable_functions()
     if not args.dry_run:
-        if not args.collector_endpoint:
-            raise SystemExit("--collector-endpoint is required unless --dry-run is set")
-        exporter = OpenTelemetryMetricExporter(
-            endpoint=args.collector_endpoint,
-            resource_attributes=default_resource_attributes(args),
-        )
+        resource_attributes = default_resource_attributes(args)
+        if args.prometheus_listen_address:
+            exporters.append(
+                PrometheusMetricExporter(
+                    listen_address=args.prometheus_listen_address,
+                    listen_port=args.prometheus_listen_port,
+                    resource_attributes=resource_attributes,
+                )
+            )
+        if args.collector_endpoint:
+            exporters.append(
+                OpenTelemetryMetricExporter(
+                    endpoint=args.collector_endpoint,
+                    resource_attributes=resource_attributes,
+                )
+            )
+        if not exporters:
+            raise SystemExit(
+                "enable Prometheus exporter or set --collector-endpoint unless --dry-run is set"
+            )
 
     program_file = tempfile.NamedTemporaryFile("w", suffix=".bt", delete=False)
     program_path = Path(program_file.name)
@@ -640,8 +790,8 @@ def run_observer(args: argparse.Namespace) -> int:
                     if args.dry_run:
                         emit_metrics_json(metrics, sys.stdout)
                     else:
-                        assert exporter is not None
-                        exporter.export(metrics)
+                        for exporter in exporters:
+                            exporter.export(metrics)
                 next_flush_at = now + args.window_seconds
                 if args.once:
                     stop_requested = True
@@ -660,12 +810,12 @@ def run_observer(args: argparse.Namespace) -> int:
             if args.dry_run:
                 emit_metrics_json(final_metrics, sys.stdout)
             else:
-                assert exporter is not None
-                exporter.export(final_metrics)
+                for exporter in exporters:
+                    exporter.export(final_metrics)
 
         return process.wait(timeout=5)
     finally:
-        if exporter is not None:
+        for exporter in exporters:
             exporter.shutdown()
         try:
             program_path.unlink(missing_ok=True)
@@ -679,6 +829,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration", type=int, default=0, help="Stop after N seconds")
     parser.add_argument("--window-seconds", type=int, default=10, help="Aggregation window size")
     parser.add_argument("--collector-endpoint", default="", help="OTLP HTTP metrics endpoint")
+    parser.add_argument(
+        "--prometheus-listen-address",
+        default="0.0.0.0",
+        help="Prometheus exporter listen address; set empty string to disable",
+    )
+    parser.add_argument(
+        "--prometheus-listen-port",
+        type=int,
+        default=9108,
+        help="Prometheus exporter listen port",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print aggregated metrics as JSON lines")
     parser.add_argument("--once", action="store_true", help="Flush once and exit")
     parser.add_argument("--bpftrace-path", default=os.environ.get("BPFTRACE", "bpftrace"))
