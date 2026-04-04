@@ -19,6 +19,18 @@ from typing import Any
 
 LLITE_METADATA_OPS = {"lookup", "open", "rename", "unlink", "mkdir", "rmdir"}
 LLITE_DATA_OPS = {"read", "write", "fsync"}
+REQUIRED_TRACEABLE_SYMBOLS = {
+    "ll_lookup_nd",
+    "ll_file_open",
+    "ll_file_read_iter",
+    "ll_file_write_iter",
+    "ll_fsync",
+    "ptlrpc_queue_wait",
+}
+OPTIONAL_TRACEABLE_SYMBOLS = {
+    "ptlrpc_send_new_req",
+    "__ptlrpc_free_req",
+}
 DAEMON_NAMES = {
     "node_exporter",
     "sshd",
@@ -124,6 +136,27 @@ def validate_lustre_mount_selection(mount_path: str, mounts_text: str | None = N
         )
 
 
+def load_traceable_functions(text: str | None = None) -> set[str]:
+    if text is None:
+        for candidate in (
+            "/sys/kernel/tracing/available_filter_functions",
+            "/sys/kernel/debug/tracing/available_filter_functions",
+        ):
+            path = Path(candidate)
+            if path.exists():
+                text = path.read_text()
+                break
+        else:
+            raise FileNotFoundError("available_filter_functions not found")
+
+    functions: set[str] = set()
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        functions.add(line.split()[0])
+    return functions
+
+
 class EventWindowAggregator:
     def __init__(self) -> None:
         self._counter_values: dict[tuple[str, tuple[tuple[str, str], ...]], int] = defaultdict(int)
@@ -212,9 +245,17 @@ class EventWindowAggregator:
         return metrics
 
 
-def build_bpftrace_program(mount_path: str) -> str:
+def build_bpftrace_program(mount_path: str, available_symbols: set[str] | None = None) -> str:
+    if available_symbols is None:
+        available_symbols = REQUIRED_TRACEABLE_SYMBOLS | OPTIONAL_TRACEABLE_SYMBOLS
+
+    missing_required = sorted(REQUIRED_TRACEABLE_SYMBOLS - available_symbols)
+    if missing_required:
+        raise ValueError(f"required traceable functions are missing: {', '.join(missing_required)}")
+
     escaped_mount = mount_path.replace("\\", "\\\\").replace('"', '\\"')
-    return f"""
+    sections = [
+        f"""
 BEGIN
 {{
   printf("TRACE_START\\tmount={escaped_mount}\\n");
@@ -317,12 +358,6 @@ kretprobe:ll_fsync
   delete(@ll_fsync_comm[tid]);
 }}
 
-kprobe:ptlrpc_send_new_req
-{{
-  printf("EVENT\\tplane=ptlrpc\\top=send_new_req\\tuid=%d\\tpid=%d\\tcomm=%s\\tduration_us=0\\tsize_bytes=0\\trequest_ptr=0x%llx\\n",
-    uid, pid, comm, arg0);
-}}
-
 kprobe:ptlrpc_queue_wait
 {{
   @rpc_wait_start[tid] = nsecs;
@@ -343,13 +378,32 @@ kretprobe:ptlrpc_queue_wait
   delete(@rpc_wait_comm[tid]);
   delete(@rpc_wait_req[tid]);
 }}
+""".strip()
+    ]
 
+    if "ptlrpc_send_new_req" in available_symbols:
+        sections.append(
+            """
+kprobe:ptlrpc_send_new_req
+{
+  printf("EVENT\\tplane=ptlrpc\\top=send_new_req\\tuid=%d\\tpid=%d\\tcomm=%s\\tduration_us=0\\tsize_bytes=0\\trequest_ptr=0x%llx\\n",
+    uid, pid, comm, arg0);
+}
+""".strip()
+        )
+
+    if "__ptlrpc_free_req" in available_symbols:
+        sections.append(
+            """
 kprobe:__ptlrpc_free_req
-{{
+{
   printf("EVENT\\tplane=ptlrpc\\top=free_req\\tuid=%d\\tpid=%d\\tcomm=%s\\tduration_us=0\\tsize_bytes=0\\trequest_ptr=0x%llx\\n",
     uid, pid, comm, arg0);
-}}
+}
 """.strip()
+        )
+
+    return "\n\n".join(sections)
 
 
 def emit_metrics_json(metrics: list[AggregatedMetric], stream: Any) -> None:
@@ -459,6 +513,7 @@ def run_observer(args: argparse.Namespace) -> int:
     aggregator = EventWindowAggregator()
     exporter: OpenTelemetryMetricExporter | None = None
     validate_lustre_mount_selection(args.mount)
+    available_symbols = load_traceable_functions()
     if not args.dry_run:
         if not args.collector_endpoint:
             raise SystemExit("--collector-endpoint is required unless --dry-run is set")
@@ -470,7 +525,7 @@ def run_observer(args: argparse.Namespace) -> int:
     program_file = tempfile.NamedTemporaryFile("w", suffix=".bt", delete=False)
     program_path = Path(program_file.name)
     try:
-        program_file.write(build_bpftrace_program(args.mount))
+        program_file.write(build_bpftrace_program(args.mount, available_symbols=available_symbols))
         program_file.flush()
         program_file.close()
 

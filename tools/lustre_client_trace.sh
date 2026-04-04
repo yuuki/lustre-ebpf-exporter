@@ -19,6 +19,18 @@ require_cmd() {
   }
 }
 
+find_python() {
+  if command -v python3.9 >/dev/null 2>&1; then
+    printf '%s\n' "python3.9"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "python3"
+    return 0
+  fi
+  return 1
+}
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 
@@ -68,7 +80,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 require_cmd bpftrace
-require_cmd python3
+python_cmd="$(find_python)" || {
+  echo "required command not found: python3.9 or python3" >&2
+  exit 1
+}
 
 if [[ ! -d "${mount_path}" ]]; then
   echo "mount path does not exist: ${mount_path}" >&2
@@ -81,4 +96,4 @@ if [[ "${dry_run}" -eq 0 && -z "${collector_endpoint}" ]]; then
 fi
 
 export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
-exec python3 "${repo_root}/tools/lustre_client_observer.py" "${observer_args[@]}"
+exec "${python_cmd}" "${repo_root}/lustre_client_observer/agent.py" "${observer_args[@]}"

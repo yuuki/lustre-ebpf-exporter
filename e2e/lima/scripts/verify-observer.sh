@@ -36,8 +36,8 @@ wait \${tracer_pid} || true
 grep -F \"lustre.client.access.operations\" ${trace_file}
 grep -F \"lustre.client.access.duration\" ${trace_file}
 grep -F \"lustre.client.data.bytes\" ${trace_file}
-if ! grep -Eq '\"lustre.access.op\": \"write\"' ${trace_file}; then
-  grep -Eq '\"lustre.access.op\": \"read\"' ${trace_file}
+if ! grep -Eq \"\\\"lustre.access.op\\\": \\\"write\\\"\" ${trace_file}; then
+  grep -Eq \"\\\"lustre.access.op\\\": \\\"read\\\"\" ${trace_file}
 fi
-grep -Eq '\"process.name\": \"[^\"]+\"' ${trace_file}
+grep -Eq \"\\\"process.name\\\": \\\"[^\\\"]+\\\"\" ${trace_file}
 '"

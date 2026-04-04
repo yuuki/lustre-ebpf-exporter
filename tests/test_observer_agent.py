@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -10,7 +11,9 @@ if str(ROOT) not in sys.path:
 from lustre_client_observer.agent import (
     AggregatedMetric,
     EventWindowAggregator,
+    build_bpftrace_program,
     classify_actor_type,
+    load_traceable_functions,
     parse_event_line,
     validate_lustre_mount_selection,
 )
@@ -165,3 +168,43 @@ def test_validate_lustre_mount_selection_accepts_single_matching_mount() -> None
     mounts_text = "10.0.0.1@tcp:/fs1 /mnt/lustre lustre rw 0 0\n"
 
     validate_lustre_mount_selection("/mnt/lustre", mounts_text=mounts_text)
+
+
+def test_observer_cli_help_runs_from_tools_entrypoint() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools/lustre_client_observer.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Lustre client observer MVP" in result.stdout
+
+
+def test_load_traceable_functions_parses_function_names() -> None:
+    functions = load_traceable_functions(
+        text="ll_lookup_nd [lustre]\nptlrpc_queue_wait [ptlrpc]\n__x64_sys_read\n"
+    )
+
+    assert "ll_lookup_nd" in functions
+    assert "ptlrpc_queue_wait" in functions
+    assert "__x64_sys_read" in functions
+
+
+def test_build_bpftrace_program_skips_missing_optional_ptlrpc_probes() -> None:
+    program = build_bpftrace_program(
+        "/mnt/lustre",
+        available_symbols={
+            "ll_lookup_nd",
+            "ll_file_open",
+            "ll_file_read_iter",
+            "ll_file_write_iter",
+            "ll_fsync",
+            "ptlrpc_queue_wait",
+        },
+    )
+
+    assert "kprobe:ptlrpc_queue_wait" in program
+    assert "kprobe:ptlrpc_send_new_req" not in program
+    assert "kprobe:__ptlrpc_free_req" not in program

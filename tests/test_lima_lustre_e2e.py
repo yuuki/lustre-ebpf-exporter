@@ -210,9 +210,9 @@ def test_client_package_install_prefers_prebuilt_kmods_with_dkms_fallback() -> N
     assert installed_skip_block in client
     assert prebuilt_install_block in client
     assert dkms_fallback_block in client
-    assert 'dnf install -y \\\n  bpftrace \\\n  python3 \\\n  python3-pip' in client
-    assert 'python3 -m pip install --upgrade pip' in client
-    assert 'python3 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"' in client
+    assert 'dnf install -y \\\n  bpftrace \\\n  python39 \\\n  python39-pip' in client
+    assert 'python3.9 -m pip install --upgrade pip' in client
+    assert 'python3.9 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"' in client
 
 
 def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
@@ -238,7 +238,8 @@ def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
 def test_client_observer_wrapper_executes_python_agent() -> None:
     script = read_text("tools/lustre_client_trace.sh")
 
-    assert "lustre_client_observer.py" in script
+    assert "lustre_client_observer/agent.py" in script
+    assert "python3.9" in script
     assert "python3" in script
     assert "--collector-endpoint" in script
     assert "--dry-run" in script

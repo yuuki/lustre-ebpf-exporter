@@ -47,12 +47,12 @@ fi
 log "installing client-side observability dependencies"
 dnf install -y \
   bpftrace \
-  python3 \
-  python3-pip
+  python39 \
+  python39-pip
 
 REPO_ROOT="$(cd "$(dirname "${COMMON_SCRIPT}")/../../.." && pwd)"
-python3 -m pip install --upgrade pip
-python3 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"
+python3.9 -m pip install --upgrade pip
+python3.9 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"
 
 iface="$(primary_interface)"
 configure_lnet "${iface}"
