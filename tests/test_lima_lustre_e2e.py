@@ -101,7 +101,7 @@ def test_readme_documents_rocky96_incompatibility_and_supported_path() -> None:
 
     assert "Rocky Linux 9.6" in readme
     assert "Lustre 2.14.0" in readme
-    assert "非対応" in readme
+    assert "unsupported" in readme
     assert "Rocky 8" in readme
     assert "SELinux" in readme
 

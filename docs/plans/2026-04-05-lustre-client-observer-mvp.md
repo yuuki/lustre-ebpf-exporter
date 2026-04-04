@@ -2,15 +2,15 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** llite を主観測面、PtlRPC を補助観測面とする常駐 observer の MVP を実装し、uid・process 単位の頻度と遅延を OTLP Metrics として送れるようにする。
+**Goal:** Implement an MVP for a resident observer that uses llite as the primary observation plane and PtlRPC as the secondary observation plane, and exports per-user and per-process frequency and latency through OTLP Metrics.
 
-**Architecture:** `bpftrace` は llite/PtlRPC の必要最小限の kprobe/kretprobe に attach し、stdout へ正規化済み raw event を出力する。Python エージェントはその出力を 10 秒窓で集約し、metadata/data 分類・actor 分類・Histogram bucket 化を行って OpenTelemetry Metrics として export する。既存 Lima E2E は observer の配備と smoke verify を担い、静的テストとユニットテストで仕様を固定する。
+**Architecture:** `bpftrace` attaches to the minimum required llite/PtlRPC kprobe/kretprobe points and emits normalized raw events to stdout. The Python agent aggregates those events over 10-second windows, classifies them into metadata/data and actor types, buckets histogram data, and exports the result as OpenTelemetry Metrics. The existing Lima E2E environment is used to deploy the observer and run smoke verification, while static and unit tests lock down the expected behavior.
 
 **Tech Stack:** Bash, bpftrace, Python 3, OpenTelemetry Python SDK, pytest
 
 ---
 
-### Task 1: 仕様を固定するユニットテストを追加
+### Task 1: Add unit tests to lock down behavior
 
 **Files:**
 - Create: `tests/test_observer_agent.py`
@@ -39,7 +39,7 @@ Create the observer module skeleton with event parsing, aggregation state, actor
 Run: `pytest tests/test_observer_agent.py -v`
 Expected: PASS
 
-### Task 2: bpftrace プログラムと observer 本体を実装
+### Task 2: Implement the bpftrace program and observer core
 
 **Files:**
 - Create: `tools/lustre_client_observer.py`
@@ -66,7 +66,7 @@ Implement:
 Run: `pytest tests/test_lima_lustre_e2e.py -k observer -v`
 Expected: PASS
 
-### Task 3: Lima guest 導線と依存関係を observer 用に更新
+### Task 3: Update Lima guest wiring and dependencies for the observer
 
 **Files:**
 - Modify: `e2e/lima/guest/client-setup.sh`
@@ -75,7 +75,7 @@ Expected: PASS
 
 **Step 1: Write the failing test**
 
-Extend E2E static tests to require Python/OpenTelemetry 依存と observer smoke verify.
+Extend the static E2E tests to require Python/OpenTelemetry dependencies and observer smoke verification.
 
 **Step 2: Run test to verify it fails**
 
@@ -91,7 +91,7 @@ Install runtime prerequisites, update smoke verify to run the observer in dry-ru
 Run: `pytest tests/test_lima_lustre_e2e.py -v`
 Expected: PASS
 
-### Task 4: 利用手順を文書化
+### Task 4: Document usage
 
 **Files:**
 - Create: `README.md`
@@ -114,7 +114,7 @@ Document the MVP scope, metrics names, common attributes, runtime prerequisites,
 Run: `pytest tests/test_lima_lustre_e2e.py -k readme -v`
 Expected: PASS
 
-### Task 5: フル検証
+### Task 5: Full verification
 
 **Files:**
 - Verify only

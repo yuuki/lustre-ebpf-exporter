@@ -1,13 +1,13 @@
 # lustre-client-observer
 
-`lustre-client-observer` は Lustre client 上で `llite` を主観測面、`PtlRPC` を補助観測面として扱い、uid・process 単位のアクセス頻度と遅延を常時計測する MVP です。
+`lustre-client-observer` is an MVP for continuous measurement of per-user and per-process Lustre client activity, using `llite` as the primary observation plane and `PtlRPC` as the secondary observation plane.
 
-## アーキテクチャ
+## Architecture
 
-- `bpftrace` が `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync`, `ptlrpc_send_new_req`, `ptlrpc_queue_wait`, `__ptlrpc_free_req` に attach して raw event を出力します。
-- Python エージェントが 10 秒窓で集約し、`metadata` と `data` の分類、`user|worker|daemon` の actor 分類、uid/process 単位の集約を行います。
-- 常時計測の主シグナルは `OpenTelemetry Metrics` です。`OTLP` exporter を使って Collector へ送ります。Collector が無い環境では `--dry-run` で JSON 集約結果を標準出力へ出せます。
-- 現在の MVP は `llite/PTLRPC` 側で mount 単位フィルタをまだ持たないため、`/proc/mounts` 上で Lustre mount が 1 つだけの client を前提に動作させます。複数 mount がある場合は誤ラベル化を避けるため起動を拒否します。
+- `bpftrace` attaches to `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync`, `ptlrpc_send_new_req`, `ptlrpc_queue_wait`, and `__ptlrpc_free_req`, and emits raw events.
+- The Python agent aggregates over 10-second windows, classifies events into `metadata` and `data`, assigns `user|worker|daemon` actor types, and aggregates by uid and process name.
+- The primary always-on signal is `OpenTelemetry Metrics`. The agent exports through `OTLP`. When no Collector is available, `--dry-run` prints aggregated JSON to stdout.
+- The current MVP does not yet support mount-level filtering on the `llite/PTLRPC` side, so it assumes the client has exactly one Lustre mount in `/proc/mounts`. If multiple mounts are present, startup is rejected to avoid mislabeled time series.
 
 ## Metrics
 
@@ -18,11 +18,11 @@
 - `lustre.client.rpc.wait.duration`
 - `lustre.client.inflight.requests`
 
-共通属性は `user.id`, `process.name`, `lustre.access.class`, `lustre.access.op`, `lustre.actor.type` です。resource 属性は `service.name=lustre-client-observer`, `lustre.fs.name`, `lustre.client.mount` などを付与します。
+Common attributes are `user.id`, `process.name`, `lustre.access.class`, `lustre.access.op`, and `lustre.actor.type`. Resource attributes include `service.name=lustre-client-observer`, `lustre.fs.name`, and `lustre.client.mount`.
 
-## 使い方
+## Usage
 
-Collector に送る場合:
+Send to a Collector:
 
 ```bash
 tools/lustre_client_trace.sh \
@@ -30,7 +30,7 @@ tools/lustre_client_trace.sh \
   --collector-endpoint http://127.0.0.1:4318/v1/metrics
 ```
 
-ローカル確認だけ行う場合:
+Run in local verification mode only:
 
 ```bash
 tools/lustre_client_trace.sh \
@@ -40,4 +40,4 @@ tools/lustre_client_trace.sh \
   --dry-run
 ```
 
-Lima ベースの疎通確認は [e2e/lima/README.md](/Users/y-tsubouchi/src/github.com/yuuki/otel-lustre-tracer/e2e/lima/README.md) と [verify-observer.sh](/Users/y-tsubouchi/src/github.com/yuuki/otel-lustre-tracer/e2e/lima/scripts/verify-observer.sh) を参照してください。
+For Lima-based verification, see [e2e/lima/README.md](/Users/y-tsubouchi/src/github.com/yuuki/otel-lustre-tracer/e2e/lima/README.md) and [verify-observer.sh](/Users/y-tsubouchi/src/github.com/yuuki/otel-lustre-tracer/e2e/lima/scripts/verify-observer.sh).

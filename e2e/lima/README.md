@@ -1,29 +1,29 @@
-# Lima Lustre 2.14.0 E2E 環境
+# Lima Lustre 2.14.0 E2E Environment
 
-このディレクトリは、Lima 上に Lustre 2.14.0 の最小 E2E 環境を立てるためのテンプレートと構築スクリプトをまとめたものです。
+This directory contains templates and setup scripts for a minimal Lustre 2.14.0 E2E environment on Lima.
 
-重要な前提:
+Important assumptions:
 
-- Lustre 2.14.0 の公開 RPM は `el8.3` 系で提供されています。
-- そのため、以前の設計メモにあった `Rocky Linux 9.6 + Lustre 2.14.0` はそのままでは非対応です。
-- この初期 E2E では、Lima 上の `Rocky 8 / x86_64` を実行対象にして Lustre 2.14.0 を検証します。
-- Apple Silicon 上では `qemu + x86_64 エミュレーション` になるため、VM 起動や DKMS ビルドは遅めです。
-- reverse-sshfs を使ってホストのワークスペースを guest へ見せるため、template の system provision で `fuse-sshfs` を入れます。
+- Public Lustre 2.14.0 RPMs are published for the `el8.3` line.
+- Because of that, the earlier `Rocky Linux 9.6 + Lustre 2.14.0` idea is unsupported as-is.
+- This initial E2E setup validates Lustre 2.14.0 on `Rocky 8 / x86_64` under Lima.
+- On Apple Silicon, this runs as `qemu + x86_64 emulation`, so VM boot and DKMS builds are slower.
+- The templates install `fuse-sshfs` during system provisioning so the host workspace can be exposed to the guest through reverse-sshfs.
 
-## 構成
+## Topology
 
 - `lustre-e2e-server`
   - Rocky 8 / x86_64
-  - MGS + MDT + OSS + OST を 1 ノードに集約
-  - `mdt` と `ost` の Lima 追加ディスクを guest 側で `/dev/vdb`, `/dev/vdc` として ext4 フォーマットし、`/mnt/lima-mdt`, `/mnt/lima-ost` にマウントした上で loopback イメージを作って `mkfs.lustre` を実行
+  - MGS + MDT + OSS + OST consolidated onto one node
+  - The `mdt` and `ost` Lima extra disks are exposed to the guest as `/dev/vdb` and `/dev/vdc`, formatted as ext4, mounted at `/mnt/lima-mdt` and `/mnt/lima-ost`, then used to host loopback images for `mkfs.lustre`
 - `lustre-e2e-client`
   - Rocky 8 / x86_64
-  - Lustre client をインストールして `lustrefs` を `/mnt/lustre` に mount
-- ネットワーク
+  - Installs the Lustre client and mounts `lustrefs` at `/mnt/lustre`
+- Network
   - Lima `user-v2`
-  - VM 間疎通ができるので、client から server の `@tcp` NID へ接続可能
+  - VM-to-VM connectivity is available, so the client can connect to the server `@tcp` NID
 
-## 使い方
+## Usage
 
 ```bash
 ./e2e/lima/scripts/up.sh
@@ -31,19 +31,19 @@
 ./e2e/lima/scripts/destroy.sh
 ```
 
-`up.sh` は次を順に実行します。
+`up.sh` runs the following steps in order:
 
-1. Lima テンプレートの検証
-2. `mdt` / `ost` 追加ディスクの作成
-3. server VM 起動
-4. client VM 起動
-5. server 側 Lustre 構築
-6. client 側 Lustre mount
+1. Validate the Lima templates
+2. Create the `mdt` / `ost` extra disks
+3. Start the server VM
+4. Start the client VM
+5. Build the Lustre server side
+6. Mount Lustre on the client side
 7. smoke verify
 
-## 注意点
+## Notes
 
-- 本構成は `Lustre 2.14.0 をまず Lima 上で再現する` ことを優先した最小 E2E です。
-- server 側は Lustre 付属 kernel へ切り替え、さらに `SELinux=disabled` にして host 側 restart を 2 回まで要求します。これは Whamcloud の walk-thru に合わせた前提です。
-- server/client とも DKMS ではなく prebuilt `kmod-*` パッケージを優先します。
-- 9.6 系の検証が必要なら、Lustre 側を 2.16 系へ上げる構成を別プロファイルとして分離するのが安全です。
+- This configuration is a minimal E2E setup optimized for reproducing `Lustre 2.14.0 on Lima` first.
+- The server switches to the Lustre-provided kernel and forces `SELinux=disabled`, which may require up to two host-side restarts. This follows the Whamcloud walkthrough assumptions.
+- Both server and client prefer prebuilt `kmod-*` packages over DKMS.
+- If Rocky 9.6 validation is required, it is safer to split that into a separate profile using Lustre 2.16 or newer.
