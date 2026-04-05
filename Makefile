@@ -19,7 +19,7 @@ build-go-exporter:
 .PHONY: stage-go-exporter
 stage-go-exporter:
 	mkdir -p $(DIST_DIR)
-	cp internal/bpf/lustre_client_observer.bpf.o $(BPF_OBJECT)
+	cp internal/bpf/lustreclientobserver_bpfel.o $(BPF_OBJECT)
 
 .PHONY: test-go
 test-go:

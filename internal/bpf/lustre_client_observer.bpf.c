@@ -2,6 +2,9 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
+#define bpf_core_read(dst, sz, src) \
+  bpf_probe_read_kernel(dst, sz, (const void *)__builtin_preserve_access_index(src))
+
 #define TASK_COMM_LEN 16
 #define OP_LOOKUP 1
 #define OP_OPEN 2
@@ -18,6 +21,7 @@ typedef unsigned char __u8;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
 
+#pragma clang attribute push(__attribute__((preserve_access_index)), apply_to = record)
 struct super_block {
   __u32 s_dev;
 };
@@ -59,6 +63,7 @@ struct observer_event {
   __u64 request_ptr;
   char comm[TASK_COMM_LEN];
 };
+#pragma clang attribute pop
 
 struct {
   __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -115,13 +120,13 @@ static __always_inline int read_inode_dev(struct inode *inode, __u32 *s_dev) {
   if (!inode) {
     return 0;
   }
-  if (bpf_probe_read_kernel(&sb, sizeof(sb), &inode->i_sb)) {
+  if (bpf_core_read(&sb, sizeof(sb), inode->i_sb)) {
     return 0;
   }
   if (!sb) {
     return 0;
   }
-  if (bpf_probe_read_kernel(s_dev, sizeof(*s_dev), &sb->s_dev)) {
+  if (bpf_core_read(s_dev, sizeof(*s_dev), sb->s_dev)) {
     return 0;
   }
   return 1;
@@ -132,7 +137,7 @@ static __always_inline int read_file_dev(struct file *file, __u32 *s_dev) {
   if (!file) {
     return 0;
   }
-  if (bpf_probe_read_kernel(&inode, sizeof(inode), &file->f_inode)) {
+  if (bpf_core_read(&inode, sizeof(inode), file->f_inode)) {
     return 0;
   }
   return read_inode_dev(inode, s_dev);
@@ -143,7 +148,7 @@ static __always_inline int read_kiocb_dev(struct kiocb *kiocb, __u32 *s_dev) {
   if (!kiocb) {
     return 0;
   }
-  if (bpf_probe_read_kernel(&file, sizeof(file), &kiocb->ki_filp)) {
+  if (bpf_core_read(&file, sizeof(file), kiocb->ki_filp)) {
     return 0;
   }
   return read_file_dev(file, s_dev);
@@ -241,11 +246,11 @@ SEC("kretprobe/ll_file_read_iter")
 int ll_file_read_iter_exit(void *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_read_map, &tid);
-  __u64 bytes = PT_REGS_RC(ctx);
+  long bytes = PT_REGS_RC(ctx);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_READ, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? bytes : 0, 0);
+  emit_from_start(info, PLANE_LLITE, OP_READ, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
   bpf_map_delete_elem(&ll_read_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
@@ -270,11 +275,11 @@ SEC("kretprobe/ll_file_write_iter")
 int ll_file_write_iter_exit(void *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_write_map, &tid);
-  __u64 bytes = PT_REGS_RC(ctx);
+  long bytes = PT_REGS_RC(ctx);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_WRITE, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? bytes : 0, 0);
+  emit_from_start(info, PLANE_LLITE, OP_WRITE, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
   bpf_map_delete_elem(&ll_write_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;

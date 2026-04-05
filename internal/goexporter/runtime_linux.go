@@ -57,6 +57,7 @@ type linuxEventSource struct {
 	links      []link.Link
 	once       sync.Once
 	done       chan struct{}
+	started    bool
 }
 
 func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (EventSource, error) {
@@ -122,15 +123,16 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		{"ptlrpc_send_new_req", "ptlrpc_send_new_req_enter", false, true},
 		{"__ptlrpc_free_req", "ptlrpc_free_req_enter", false, true},
 	}
-	if err := source.attachAll(required, cfg.LegacySymbolAllowMissing); err != nil {
+	if err := source.attachAll(required, false); err != nil {
 		source.Close()
 		return nil, err
 	}
-	if err := source.attachAll(optional, true); err != nil {
+	if err := source.attachAll(optional, false); err != nil {
 		source.Close()
 		return nil, err
 	}
 
+	source.started = true
 	go source.readLoop(ctx)
 	return source, nil
 }
@@ -219,7 +221,9 @@ func (s *linuxEventSource) Close() error {
 		if s.collection != nil {
 			closeErr = errors.Join(closeErr, s.collection.Close())
 		}
-		<-s.done
+		if s.started {
+			<-s.done
+		}
 	})
 	return closeErr
 }

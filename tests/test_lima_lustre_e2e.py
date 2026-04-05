@@ -266,6 +266,10 @@ def test_go_exporter_cli_uses_standard_prometheus_web_flags() -> None:
     assert '"mount"' in main
     assert '"bpf-object"' in main
     assert '"legacy-symbol-allow-missing"' in main
+    assert "DurationVar" not in main
+    assert "IntVar(&windowSeconds" in main
+    assert "IntVar(&durationSeconds" in main
+    assert "syscall.SIGTERM" in main
 
 
 def test_makefile_wires_bpf2go_build_and_stage_targets() -> None:
@@ -276,6 +280,7 @@ def test_makefile_wires_bpf2go_build_and_stage_targets() -> None:
     assert "build-go-exporter" in makefile
     assert "stage-go-exporter" in makefile
     assert "dist/$(GOOS)-$(GOARCH)" in makefile
+    assert "lustreclientobserver_bpfel.o" in makefile
 
 
 def test_go_verify_script_scrapes_prometheus_metrics() -> None:
@@ -288,6 +293,23 @@ def test_go_verify_script_scrapes_prometheus_metrics() -> None:
     assert "lustre_client_access_operations_total" in script
     assert "lustre_client_access_duration_seconds" in script
     assert "lustre_client_data_bytes_total" in script
+
+
+def test_go_runtime_keeps_required_probes_strict_and_optional_degraded() -> None:
+    runtime_linux = read_text("internal/goexporter/runtime_linux.go")
+
+    assert "source.attachAll(required, false)" in runtime_linux
+    assert "source.attachAll(optional, false)" in runtime_linux
+    assert "if s.started" in runtime_linux
+
+
+def test_go_bpf_source_uses_core_access_and_signed_retvals() -> None:
+    source = read_text("internal/bpf/lustre_client_observer.bpf.c")
+
+    assert "preserve_access_index" in source
+    assert "__builtin_preserve_access_index" in source
+    assert "long bytes = PT_REGS_RC(ctx);" in source
+    assert "(__u64)bytes" in source
 
 
 def test_verify_observer_script_runs_aggregated_observer_dry_run() -> None:
