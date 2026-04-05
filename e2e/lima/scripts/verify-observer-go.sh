@@ -17,6 +17,12 @@ set -euo pipefail
 test -x "${binary_path}"
 test -f "${bpf_object_path}"
 pkill -f "${binary_path}" || true
+for _ in \$(seq 1 20); do
+  if ! pgrep -f "${binary_path}" >/dev/null 2>&1 && ! ss -ltn | grep -F ':9108' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 rm -f "${metrics_file}" "${log_file}" "${smoke_file}"
 nohup "${binary_path}" \
   --mount "${CLIENT_MOUNTPOINT}" \
@@ -41,5 +47,9 @@ for _ in \$(seq 1 20); do
   sleep 1
 done
 grep -F "lustre_client_access_operations_total" "${metrics_file}"
+if grep -F 'process=""' "${metrics_file}" >/dev/null; then
+  echo "unexpected empty process label in Go exporter metrics" >&2
+  exit 1
+fi
 cat "${log_file}" >/dev/null
 EOF

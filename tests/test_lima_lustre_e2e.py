@@ -307,7 +307,10 @@ def test_go_verify_script_scrapes_prometheus_metrics() -> None:
     assert "--web.listen-address :9108" in script
     assert "--web.telemetry-path /metrics" in script
     assert "--bpf-object" in script
+    assert 'pgrep -f "${binary_path}"' in script
+    assert "ss -ltn" in script
     assert "lustre_client_access_operations_total" in script
+    assert 'process=""' in script
     assert "lustre_client_access_duration_seconds" not in script
     assert "lustre_client_data_bytes_total" not in script
 

@@ -4,7 +4,6 @@ package goexporter
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
@@ -17,19 +16,6 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
-)
-
-const (
-	rawPlaneLLite   uint8 = 1
-	rawPlanePtlRPC  uint8 = 2
-	rawOpLookup     uint8 = 1
-	rawOpOpen       uint8 = 2
-	rawOpRead       uint8 = 3
-	rawOpWrite      uint8 = 4
-	rawOpFsync      uint8 = 5
-	rawOpQueueWait  uint8 = 6
-	rawOpSendNewReq uint8 = 7
-	rawOpFreeReq    uint8 = 8
 )
 
 type bpfConfig struct {
@@ -235,61 +221,7 @@ func (s *linuxEventSource) Close() error {
 }
 
 func decodeRawEvent(sample []byte) (Event, error) {
-	if len(sample) < 68 {
-		return Event{}, fmt.Errorf("short raw event: got %d bytes", len(sample))
-	}
-	plane, err := planeName(sample[0])
-	if err != nil {
-		return Event{}, err
-	}
-	op, err := opName(sample[1])
-	if err != nil {
-		return Event{}, err
-	}
-	return Event{
-		Plane:      plane,
-		Op:         op,
-		UID:        binary.LittleEndian.Uint32(sample[8:12]),
-		PID:        binary.LittleEndian.Uint32(sample[12:16]),
-		Comm:       sanitizeComm(sample[52:68]),
-		DurationUS: binary.LittleEndian.Uint64(sample[28:36]),
-		SizeBytes:  binary.LittleEndian.Uint64(sample[36:44]),
-		RequestPtr: binary.LittleEndian.Uint64(sample[44:52]),
-	}, nil
-}
-
-func planeName(raw uint8) (string, error) {
-	switch raw {
-	case rawPlaneLLite:
-		return PlaneLLite, nil
-	case rawPlanePtlRPC:
-		return PlanePtlRPC, nil
-	default:
-		return "", fmt.Errorf("unknown plane code: %d", raw)
-	}
-}
-
-func opName(raw uint8) (string, error) {
-	switch raw {
-	case rawOpLookup:
-		return OpLookup, nil
-	case rawOpOpen:
-		return OpOpen, nil
-	case rawOpRead:
-		return OpRead, nil
-	case rawOpWrite:
-		return OpWrite, nil
-	case rawOpFsync:
-		return OpFsync, nil
-	case rawOpQueueWait:
-		return OpQueueWait, nil
-	case rawOpSendNewReq:
-		return OpSendNewReq, nil
-	case rawOpFreeReq:
-		return OpFreeReq, nil
-	default:
-		return "", fmt.Errorf("unknown op code: %d", raw)
-	}
+	return parseObserverEvent(sample)
 }
 
 func isMissingSymbolError(err error) bool {

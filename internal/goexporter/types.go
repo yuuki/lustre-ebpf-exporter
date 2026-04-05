@@ -1,13 +1,28 @@
 package goexporter
 
 import (
-	"strings"
+	"bytes"
+	"encoding/binary"
+	"fmt"
 	"time"
 )
 
 const (
 	PlaneLLite  = "llite"
 	PlanePtlRPC = "ptlrpc"
+)
+
+const (
+	rawPlaneLLite   uint8 = 1
+	rawPlanePtlRPC  uint8 = 2
+	rawOpLookup     uint8 = 1
+	rawOpOpen       uint8 = 2
+	rawOpRead       uint8 = 3
+	rawOpWrite      uint8 = 4
+	rawOpFsync      uint8 = 5
+	rawOpQueueWait  uint8 = 6
+	rawOpSendNewReq uint8 = 7
+	rawOpFreeReq    uint8 = 8
 )
 
 const (
@@ -87,5 +102,68 @@ type MountInfo struct {
 }
 
 func sanitizeComm(raw []byte) string {
-	return strings.Trim(string(raw), "\x00")
+	raw = bytes.TrimLeft(raw, "\x00")
+	end := bytes.IndexByte(raw, 0)
+	if end >= 0 {
+		raw = raw[:end]
+	}
+	return string(raw)
+}
+
+func parseObserverEvent(sample []byte) (Event, error) {
+	if len(sample) < 64 {
+		return Event{}, fmt.Errorf("short raw event: got %d bytes", len(sample))
+	}
+	plane, err := planeName(sample[0])
+	if err != nil {
+		return Event{}, err
+	}
+	op, err := opName(sample[1])
+	if err != nil {
+		return Event{}, err
+	}
+	return Event{
+		Plane:      plane,
+		Op:         op,
+		UID:        binary.LittleEndian.Uint32(sample[8:12]),
+		PID:        binary.LittleEndian.Uint32(sample[12:16]),
+		DurationUS: binary.LittleEndian.Uint64(sample[24:32]),
+		SizeBytes:  binary.LittleEndian.Uint64(sample[32:40]),
+		RequestPtr: binary.LittleEndian.Uint64(sample[40:48]),
+		Comm:       sanitizeComm(sample[48:64]),
+	}, nil
+}
+
+func planeName(raw uint8) (string, error) {
+	switch raw {
+	case rawPlaneLLite:
+		return PlaneLLite, nil
+	case rawPlanePtlRPC:
+		return PlanePtlRPC, nil
+	default:
+		return "", fmt.Errorf("unknown plane code: %d", raw)
+	}
+}
+
+func opName(raw uint8) (string, error) {
+	switch raw {
+	case rawOpLookup:
+		return OpLookup, nil
+	case rawOpOpen:
+		return OpOpen, nil
+	case rawOpRead:
+		return OpRead, nil
+	case rawOpWrite:
+		return OpWrite, nil
+	case rawOpFsync:
+		return OpFsync, nil
+	case rawOpQueueWait:
+		return OpQueueWait, nil
+	case rawOpSendNewReq:
+		return OpSendNewReq, nil
+	case rawOpFreeReq:
+		return OpFreeReq, nil
+	default:
+		return "", fmt.Errorf("unknown op code: %d", raw)
+	}
 }

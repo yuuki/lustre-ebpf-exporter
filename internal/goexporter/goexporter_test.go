@@ -2,6 +2,7 @@ package goexporter
 
 import (
 	"context"
+	"encoding/binary"
 	"os"
 	"strings"
 	"syscall"
@@ -115,6 +116,43 @@ func TestSanitizeCommTrimsLeadingAndTrailingNulls(t *testing.T) {
 	got := sanitizeComm([]byte{0, 0, 'd', 'd', 0, 0})
 	if got != "dd" {
 		t.Fatalf("expected dd, got %q", got)
+	}
+}
+
+func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
+	t.Parallel()
+
+	sample := make([]byte, 64)
+	sample[0] = 1
+	sample[1] = 4
+	binary.LittleEndian.PutUint32(sample[8:12], 1001)
+	binary.LittleEndian.PutUint32(sample[12:16], 4321)
+	binary.LittleEndian.PutUint64(sample[24:32], 250)
+	binary.LittleEndian.PutUint64(sample[32:40], 4096)
+	binary.LittleEndian.PutUint64(sample[40:48], 12345)
+	copy(sample[48:64], []byte("dd\x00"))
+
+	event, err := parseObserverEvent(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Plane != PlaneLLite {
+		t.Fatalf("expected llite plane, got %q", event.Plane)
+	}
+	if event.Op != OpWrite {
+		t.Fatalf("expected write op, got %q", event.Op)
+	}
+	if event.Comm != "dd" {
+		t.Fatalf("expected process dd, got %q", event.Comm)
+	}
+	if event.DurationUS != 250 {
+		t.Fatalf("expected duration 250, got %d", event.DurationUS)
+	}
+	if event.SizeBytes != 4096 {
+		t.Fatalf("expected size 4096, got %d", event.SizeBytes)
+	}
+	if event.RequestPtr != 12345 {
+		t.Fatalf("expected request 12345, got %d", event.RequestPtr)
 	}
 }
 
