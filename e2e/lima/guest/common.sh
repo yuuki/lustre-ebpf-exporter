@@ -30,6 +30,7 @@ primary_ipv4() {
 ensure_base_deps() {
   log "installing base dependencies"
   dnf install -y \
+    curl \
     dnf-plugins-core \
     e2fsprogs \
     iproute \

@@ -18,6 +18,7 @@ test -f ${bpf_object_path}
 rm -f ${metrics_file} ${smoke_file}
 stdbuf -oL ${binary_path} \
   --mount ${CLIENT_MOUNTPOINT} \
+  --window-seconds 2 \
   --web.listen-address :9108 \
   --web.telemetry-path /metrics \
   --bpf-object ${bpf_object_path} &
@@ -28,9 +29,11 @@ dd if=/dev/zero of=${smoke_file} bs=1M count=4 conv=fsync status=none
 sync
 cat ${smoke_file} >/dev/null
 rm -f ${smoke_file}
-for _ in \$(seq 1 15); do
+for _ in \$(seq 1 20); do
   if curl -fsS http://127.0.0.1:9108/metrics > ${metrics_file}; then
-    break
+    if grep -Fq \"lustre_client_access_operations_total\" ${metrics_file}; then
+      break
+    fi
   fi
   sleep 1
 done

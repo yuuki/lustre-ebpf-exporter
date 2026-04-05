@@ -1,9 +1,7 @@
 #include <linux/bpf.h>
+#include <linux/ptrace.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-
-#define bpf_core_read(dst, sz, src) \
-  bpf_probe_read_kernel(dst, sz, (const void *)__builtin_preserve_access_index(src))
 
 #define TASK_COMM_LEN 16
 #define OP_LOOKUP 1
@@ -21,7 +19,6 @@ typedef unsigned char __u8;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
 
-#pragma clang attribute push(__attribute__((preserve_access_index)), apply_to = record)
 struct super_block {
   __u32 s_dev;
 };
@@ -63,7 +60,6 @@ struct observer_event {
   __u64 request_ptr;
   char comm[TASK_COMM_LEN];
 };
-#pragma clang attribute pop
 
 struct {
   __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -73,8 +69,9 @@ struct {
 } config_map SEC(".maps");
 
 struct {
-  __uint(type, BPF_MAP_TYPE_RINGBUF);
-  __uint(max_entries, 1 << 24);
+  __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+  __uint(key_size, sizeof(__u32));
+  __uint(value_size, sizeof(__u32));
 } events SEC(".maps");
 
 struct {
@@ -120,13 +117,13 @@ static __always_inline int read_inode_dev(struct inode *inode, __u32 *s_dev) {
   if (!inode) {
     return 0;
   }
-  if (bpf_core_read(&sb, sizeof(sb), inode->i_sb)) {
+  if (bpf_probe_read_kernel(&sb, sizeof(sb), &inode->i_sb)) {
     return 0;
   }
   if (!sb) {
     return 0;
   }
-  if (bpf_core_read(s_dev, sizeof(*s_dev), sb->s_dev)) {
+  if (bpf_probe_read_kernel(s_dev, sizeof(*s_dev), &sb->s_dev)) {
     return 0;
   }
   return 1;
@@ -137,7 +134,7 @@ static __always_inline int read_file_dev(struct file *file, __u32 *s_dev) {
   if (!file) {
     return 0;
   }
-  if (bpf_core_read(&inode, sizeof(inode), file->f_inode)) {
+  if (bpf_probe_read_kernel(&inode, sizeof(inode), &file->f_inode)) {
     return 0;
   }
   return read_inode_dev(inode, s_dev);
@@ -148,31 +145,29 @@ static __always_inline int read_kiocb_dev(struct kiocb *kiocb, __u32 *s_dev) {
   if (!kiocb) {
     return 0;
   }
-  if (bpf_core_read(&file, sizeof(file), kiocb->ki_filp)) {
+  if (bpf_probe_read_kernel(&file, sizeof(file), &kiocb->ki_filp)) {
     return 0;
   }
   return read_file_dev(file, s_dev);
 }
 
-static __always_inline int emit_from_start(struct start_info *info, __u8 plane, __u8 op, __u64 duration_us, __u64 size_bytes, __u64 request_ptr) {
-  struct observer_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-  if (!event) {
-    return 0;
-  }
-  event->plane = plane;
-  event->op = op;
-  event->uid = info->uid;
-  event->pid = info->pid;
-  event->duration_us = duration_us;
-  event->size_bytes = size_bytes;
-  event->request_ptr = request_ptr;
-  __builtin_memcpy(event->comm, info->comm, sizeof(event->comm));
-  bpf_ringbuf_submit(event, 0);
+static __always_inline int emit_from_start(void *ctx, struct start_info *info, __u8 plane, __u8 op, __u64 duration_us, __u64 size_bytes, __u64 request_ptr) {
+  struct observer_event event = {};
+  event.plane = plane;
+  event.op = op;
+  event.uid = info->uid;
+  event.pid = info->pid;
+  event.duration_us = duration_us;
+  event.size_bytes = size_bytes;
+  event.request_ptr = request_ptr;
+  __builtin_memcpy(event.comm, info->comm, sizeof(event.comm));
+  bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, &event, sizeof(event));
   return 0;
 }
 
 SEC("kprobe/ll_lookup_nd")
-int ll_lookup_nd_enter(struct inode *inode) {
+int ll_lookup_nd_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
@@ -187,20 +182,21 @@ int ll_lookup_nd_enter(struct inode *inode) {
 }
 
 SEC("kretprobe/ll_lookup_nd")
-int ll_lookup_nd_exit(void *ctx) {
+int ll_lookup_nd_exit(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_lookup_map, &tid);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_LOOKUP, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
+  emit_from_start(ctx, info, PLANE_LLITE, OP_LOOKUP, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
   bpf_map_delete_elem(&ll_lookup_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
 }
 
 SEC("kprobe/ll_file_open")
-int ll_file_open_enter(struct inode *inode) {
+int ll_file_open_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
@@ -215,20 +211,21 @@ int ll_file_open_enter(struct inode *inode) {
 }
 
 SEC("kretprobe/ll_file_open")
-int ll_file_open_exit(void *ctx) {
+int ll_file_open_exit(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_open_map, &tid);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_OPEN, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
+  emit_from_start(ctx, info, PLANE_LLITE, OP_OPEN, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
   bpf_map_delete_elem(&ll_open_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
 }
 
 SEC("kprobe/ll_file_read_iter")
-int ll_file_read_iter_enter(struct kiocb *kiocb) {
+int ll_file_read_iter_enter(struct pt_regs *ctx) {
+  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
@@ -243,21 +240,22 @@ int ll_file_read_iter_enter(struct kiocb *kiocb) {
 }
 
 SEC("kretprobe/ll_file_read_iter")
-int ll_file_read_iter_exit(void *ctx) {
+int ll_file_read_iter_exit(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_read_map, &tid);
   long bytes = PT_REGS_RC(ctx);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_READ, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
+  emit_from_start(ctx, info, PLANE_LLITE, OP_READ, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
   bpf_map_delete_elem(&ll_read_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
 }
 
 SEC("kprobe/ll_file_write_iter")
-int ll_file_write_iter_enter(struct kiocb *kiocb) {
+int ll_file_write_iter_enter(struct pt_regs *ctx) {
+  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
@@ -272,21 +270,22 @@ int ll_file_write_iter_enter(struct kiocb *kiocb) {
 }
 
 SEC("kretprobe/ll_file_write_iter")
-int ll_file_write_iter_exit(void *ctx) {
+int ll_file_write_iter_exit(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_write_map, &tid);
   long bytes = PT_REGS_RC(ctx);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_WRITE, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
+  emit_from_start(ctx, info, PLANE_LLITE, OP_WRITE, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
   bpf_map_delete_elem(&ll_write_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
 }
 
 SEC("kprobe/ll_fsync")
-int ll_fsync_enter(struct file *file) {
+int ll_fsync_enter(struct pt_regs *ctx) {
+  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
@@ -301,20 +300,21 @@ int ll_fsync_enter(struct file *file) {
 }
 
 SEC("kretprobe/ll_fsync")
-int ll_fsync_exit(void *ctx) {
+int ll_fsync_exit(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&ll_fsync_map, &tid);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_LLITE, OP_FSYNC, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
+  emit_from_start(ctx, info, PLANE_LLITE, OP_FSYNC, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
   bpf_map_delete_elem(&ll_fsync_map, &tid);
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
 }
 
 SEC("kprobe/ptlrpc_send_new_req")
-int ptlrpc_send_new_req_enter(void *req) {
+int ptlrpc_send_new_req_enter(struct pt_regs *ctx) {
+  __u64 req_ptr = PT_REGS_PARM1(ctx);
   __u64 tid = current_tid();
   __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
   struct start_info info = {};
@@ -322,21 +322,23 @@ int ptlrpc_send_new_req_enter(void *req) {
   if (!selected) {
     return 0;
   }
-  fill_start_info(&info, (__u64)req);
+  fill_start_info(&info, req_ptr);
   bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &tracked, BPF_ANY);
-  emit_from_start(&info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr);
+  emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr);
   return 0;
 }
 
 SEC("kprobe/ptlrpc_queue_wait")
-int ptlrpc_queue_wait_enter(void *req) {
+int ptlrpc_queue_wait_enter(struct pt_regs *ctx) {
   __u64 tid = current_tid();
-  __u64 req_ptr = (__u64)req;
+  __u64 req_ptr = PT_REGS_PARM1(ctx);
   __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
   __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
   struct start_info info = {};
   __u8 tracked_value = 1;
-  if (!selected && !tracked) {
+  int selected_ok = selected != 0;
+  int tracked_ok = tracked != 0;
+  if (!selected_ok && !tracked_ok) {
     return 0;
   }
   fill_start_info(&info, req_ptr);
@@ -346,27 +348,27 @@ int ptlrpc_queue_wait_enter(void *req) {
 }
 
 SEC("kretprobe/ptlrpc_queue_wait")
-int ptlrpc_queue_wait_exit(void *ctx) {
+int ptlrpc_queue_wait_exit(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   struct start_info *info = bpf_map_lookup_elem(&rpc_wait_map, &tid);
   if (!info) {
     return 0;
   }
-  emit_from_start(info, PLANE_PTLRPC, OP_QUEUE_WAIT, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, info->request_ptr);
+  emit_from_start(ctx, info, PLANE_PTLRPC, OP_QUEUE_WAIT, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, info->request_ptr);
   bpf_map_delete_elem(&rpc_wait_map, &tid);
   return 0;
 }
 
 SEC("kprobe/__ptlrpc_free_req")
-int ptlrpc_free_req_enter(void *req) {
-  __u64 req_ptr = (__u64)req;
+int ptlrpc_free_req_enter(struct pt_regs *ctx) {
+  __u64 req_ptr = PT_REGS_PARM1(ctx);
   __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
   struct start_info info = {};
   if (!tracked) {
     return 0;
   }
   fill_start_info(&info, req_ptr);
-  emit_from_start(&info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr);
+  emit_from_start(ctx, &info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr);
   bpf_map_delete_elem(&tracked_reqs, &req_ptr);
   return 0;
 }

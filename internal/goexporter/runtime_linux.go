@@ -15,7 +15,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"github.com/cilium/ebpf/ringbuf"
+	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
 )
 
@@ -52,7 +52,7 @@ type bpfConfig struct {
 
 type linuxEventSource struct {
 	events     chan Event
-	reader     *ringbuf.Reader
+	reader     *perf.Reader
 	collection *ebpf.Collection
 	links      []link.Link
 	once       sync.Once
@@ -71,13 +71,35 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		return nil, err
 	}
 
+	required := []probeSpec{
+		{"ll_lookup_nd", "ll_lookup_nd_enter", false, false},
+		{"ll_lookup_nd", "ll_lookup_nd_exit", true, false},
+		{"ll_file_open", "ll_file_open_enter", false, false},
+		{"ll_file_open", "ll_file_open_exit", true, false},
+		{"ll_file_read_iter", "ll_file_read_iter_enter", false, false},
+		{"ll_file_read_iter", "ll_file_read_iter_exit", true, false},
+		{"ll_file_write_iter", "ll_file_write_iter_enter", false, false},
+		{"ll_file_write_iter", "ll_file_write_iter_exit", true, false},
+		{"ll_fsync", "ll_fsync_enter", false, false},
+		{"ll_fsync", "ll_fsync_exit", true, false},
+	}
+	optional := []probeSpec{
+		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_enter", false, true},
+		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_exit", true, true},
+		{"ptlrpc_send_new_req", "ptlrpc_send_new_req_enter", false, true},
+		{"__ptlrpc_free_req", "ptlrpc_free_req_enter", false, true},
+	}
+
 	spec, err := ebpf.LoadCollectionSpec(cfg.BPFObjectPath)
 	if err != nil {
 		return nil, err
 	}
-	collection, err := ebpf.NewCollection(spec)
+	collection, skippedPrograms, err := loadCollectionWithOptionalPrograms(spec, optional)
 	if err != nil {
 		return nil, err
+	}
+	if len(skippedPrograms) > 0 {
+		log.Printf("warning: disabled optional BPF programs after load failure: %s", strings.Join(skippedPrograms, ", "))
 	}
 
 	configMap := collection.Maps["config_map"]
@@ -92,7 +114,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		return nil, err
 	}
 
-	reader, err := ringbuf.NewReader(collection.Maps["events"])
+	reader, err := perf.NewReader(collection.Maps["events"], os.Getpagesize()*8)
 	if err != nil {
 		collection.Close()
 		return nil, err
@@ -105,24 +127,6 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		done:       make(chan struct{}),
 	}
 
-	required := []probeSpec{
-		{"ll_lookup_nd", "ll_lookup_nd_enter", false, false},
-		{"ll_lookup_nd", "ll_lookup_nd_exit", true, false},
-		{"ll_file_open", "ll_file_open_enter", false, false},
-		{"ll_file_open", "ll_file_open_exit", true, false},
-		{"ll_file_read_iter", "ll_file_read_iter_enter", false, false},
-		{"ll_file_read_iter", "ll_file_read_iter_exit", true, false},
-		{"ll_file_write_iter", "ll_file_write_iter_enter", false, false},
-		{"ll_file_write_iter", "ll_file_write_iter_exit", true, false},
-		{"ll_fsync", "ll_fsync_enter", false, false},
-		{"ll_fsync", "ll_fsync_exit", true, false},
-		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_enter", false, false},
-		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_exit", true, false},
-	}
-	optional := []probeSpec{
-		{"ptlrpc_send_new_req", "ptlrpc_send_new_req_enter", false, true},
-		{"__ptlrpc_free_req", "ptlrpc_free_req_enter", false, true},
-	}
 	if err := source.attachAll(required, false); err != nil {
 		source.Close()
 		return nil, err
@@ -181,16 +185,20 @@ func (s *linuxEventSource) readLoop(ctx context.Context) {
 	for {
 		record, err := s.reader.Read()
 		if err != nil {
-			if errors.Is(err, ringbuf.ErrClosed) {
+			if errors.Is(err, perf.ErrClosed) {
 				return
 			}
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				log.Printf("warning: ringbuf read failed: %v", err)
+				log.Printf("warning: perf event read failed: %v", err)
 				continue
 			}
+		}
+		if record.LostSamples > 0 {
+			log.Printf("warning: lost %d perf samples", record.LostSamples)
+			continue
 		}
 		event, err := decodeRawEvent(record.RawSample)
 		if err != nil {
@@ -219,7 +227,7 @@ func (s *linuxEventSource) Close() error {
 			closeErr = errors.Join(closeErr, lnk.Close())
 		}
 		if s.collection != nil {
-			closeErr = errors.Join(closeErr, s.collection.Close())
+			s.collection.Close()
 		}
 		if s.started {
 			<-s.done
@@ -290,4 +298,29 @@ func opName(raw uint8) (string, error) {
 func isMissingSymbolError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "no such file") || strings.Contains(msg, "symbol") || strings.Contains(msg, "not found")
+}
+
+func loadCollectionWithOptionalPrograms(spec *ebpf.CollectionSpec, optional []probeSpec) (*ebpf.Collection, []string, error) {
+	collection, err := ebpf.NewCollection(spec)
+	if err == nil {
+		return collection, nil, nil
+	}
+
+	specCopy := spec.Copy()
+	var skipped []string
+	for _, probe := range optional {
+		if _, ok := specCopy.Programs[probe.program]; ok {
+			delete(specCopy.Programs, probe.program)
+			skipped = append(skipped, probe.program)
+		}
+	}
+	if len(skipped) == 0 {
+		return nil, nil, err
+	}
+
+	collection, retryErr := ebpf.NewCollection(specCopy)
+	if retryErr != nil {
+		return nil, nil, err
+	}
+	return collection, skipped, nil
 }

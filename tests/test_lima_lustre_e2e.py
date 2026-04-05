@@ -42,6 +42,7 @@ def test_expected_lima_e2e_files_exist() -> None:
         "internal/bpf/lustre_client_observer.bpf.c",
         "Makefile",
         "go.mod",
+        "build/docker/go-exporter.Dockerfile",
     ]
 
     for relpath in expected:
@@ -279,8 +280,24 @@ def test_makefile_wires_bpf2go_build_and_stage_targets() -> None:
     assert "generate-go-exporter" in makefile
     assert "build-go-exporter" in makefile
     assert "stage-go-exporter" in makefile
+    assert "docker-build-go-exporter" in makefile
+    assert "docker build" in makefile
     assert "dist/$(GOOS)-$(GOARCH)" in makefile
-    assert "lustreclientobserver_bpfel.o" in makefile
+    assert "find internal/bpf -maxdepth 1 -type f -name 'lustreclientobserver*.o'" in makefile
+
+
+def test_go_exporter_dockerfile_builds_linux_artifacts() -> None:
+    dockerfile = read_text("build/docker/go-exporter.Dockerfile")
+
+    assert "FROM golang:1.26.1-bookworm AS builder" in dockerfile
+    assert "ENV PATH=/usr/local/go/bin:/go/bin:${PATH}" in dockerfile
+    assert "apt-get install -y --no-install-recommends clang libbpf-dev libelf-dev linux-libc-dev llvm make" in dockerfile
+    assert 'ENV BPF_CFLAGS="-I. -I/usr/include/x86_64-linux-gnu -D__TARGET_ARCH_x86"' in dockerfile
+    assert "make generate-go-exporter" in dockerfile
+    assert "make build-go-exporter" in dockerfile
+    assert "make stage-go-exporter" in dockerfile
+    assert "dist/linux-amd64/lustre-client-observer" in dockerfile
+    assert "dist/linux-amd64/lustre_client_observer.bpf.o" in dockerfile
 
 
 def test_go_verify_script_scrapes_prometheus_metrics() -> None:
@@ -300,14 +317,15 @@ def test_go_runtime_keeps_required_probes_strict_and_optional_degraded() -> None
 
     assert "source.attachAll(required, false)" in runtime_linux
     assert "source.attachAll(optional, false)" in runtime_linux
+    assert '{"ptlrpc_queue_wait", "ptlrpc_queue_wait_enter", false, true}' in runtime_linux
     assert "if s.started" in runtime_linux
 
 
 def test_go_bpf_source_uses_core_access_and_signed_retvals() -> None:
     source = read_text("internal/bpf/lustre_client_observer.bpf.c")
 
-    assert "preserve_access_index" in source
-    assert "__builtin_preserve_access_index" in source
+    assert "bpf_probe_read_kernel" in source
+    assert "#include <linux/ptrace.h>" in source
     assert "long bytes = PT_REGS_RC(ctx);" in source
     assert "(__u64)bytes" in source
 
