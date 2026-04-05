@@ -2,6 +2,7 @@ package goexporter
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/signal"
 	"time"
@@ -37,6 +38,7 @@ func Run(ctx context.Context, cfg Config) error {
 	aggregator := NewAggregator()
 	ticker := time.NewTicker(cfg.Window)
 	defer ticker.Stop()
+	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
 	var durationTimer <-chan time.Time
 	if cfg.Duration > 0 {
@@ -48,20 +50,39 @@ func Run(ctx context.Context, cfg Config) error {
 	for {
 		select {
 		case <-ctx.Done():
-			exporter.Export(aggregator.Collect())
+			metrics := aggregator.Collect()
+			if debugEnabled {
+				log.Printf("debug: flushing %d metrics on context cancellation", len(metrics))
+			}
+			exporter.Export(metrics)
 			return nil
 		case <-durationTimer:
-			exporter.Export(aggregator.Collect())
+			metrics := aggregator.Collect()
+			if debugEnabled {
+				log.Printf("debug: flushing %d metrics on duration timeout", len(metrics))
+			}
+			exporter.Export(metrics)
 			return nil
 		case <-ticker.C:
-			exporter.Export(aggregator.Collect())
+			metrics := aggregator.Collect()
+			if debugEnabled {
+				log.Printf("debug: flushing %d metrics on ticker", len(metrics))
+			}
+			exporter.Export(metrics)
 			if cfg.Once {
 				return nil
 			}
 		case event, ok := <-source.Events():
 			if !ok {
-				exporter.Export(aggregator.Collect())
+				metrics := aggregator.Collect()
+				if debugEnabled {
+					log.Printf("debug: flushing %d metrics on source close", len(metrics))
+				}
+				exporter.Export(metrics)
 				return nil
+			}
+			if debugEnabled {
+				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
 			aggregator.Consume(event)
 		}

@@ -79,8 +79,7 @@ struct {
   __uint(max_entries, 8192);
   __type(key, __u64);
   __type(value, struct start_info);
-} ll_lookup_map SEC(".maps"), ll_open_map SEC(".maps"), ll_read_map SEC(".maps"),
-    ll_write_map SEC(".maps"), ll_fsync_map SEC(".maps"), rpc_wait_map SEC(".maps");
+} rpc_wait_map SEC(".maps");
 
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
@@ -167,148 +166,56 @@ static __always_inline int emit_from_start(void *ctx, struct start_info *info, _
 
 SEC("kprobe/ll_lookup_nd")
 int ll_lookup_nd_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
-  if (!read_inode_dev(inode, &s_dev) || !mount_matches(s_dev)) {
-    return 0;
-  }
   fill_start_info(&info, 0);
-  bpf_map_update_elem(&ll_lookup_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  return 0;
-}
-
-SEC("kretprobe/ll_lookup_nd")
-int ll_lookup_nd_exit(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  struct start_info *info = bpf_map_lookup_elem(&ll_lookup_map, &tid);
-  if (!info) {
-    return 0;
-  }
-  emit_from_start(ctx, info, PLANE_LLITE, OP_LOOKUP, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
-  bpf_map_delete_elem(&ll_lookup_map, &tid);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  emit_from_start(ctx, &info, PLANE_LLITE, OP_LOOKUP, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_file_open")
 int ll_file_open_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
-  if (!read_inode_dev(inode, &s_dev) || !mount_matches(s_dev)) {
-    return 0;
-  }
   fill_start_info(&info, 0);
-  bpf_map_update_elem(&ll_open_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  return 0;
-}
-
-SEC("kretprobe/ll_file_open")
-int ll_file_open_exit(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  struct start_info *info = bpf_map_lookup_elem(&ll_open_map, &tid);
-  if (!info) {
-    return 0;
-  }
-  emit_from_start(ctx, info, PLANE_LLITE, OP_OPEN, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
-  bpf_map_delete_elem(&ll_open_map, &tid);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  emit_from_start(ctx, &info, PLANE_LLITE, OP_OPEN, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_file_read_iter")
 int ll_file_read_iter_enter(struct pt_regs *ctx) {
-  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !mount_matches(s_dev)) {
-    return 0;
-  }
   fill_start_info(&info, 0);
-  bpf_map_update_elem(&ll_read_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  return 0;
-}
-
-SEC("kretprobe/ll_file_read_iter")
-int ll_file_read_iter_exit(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  struct start_info *info = bpf_map_lookup_elem(&ll_read_map, &tid);
-  long bytes = PT_REGS_RC(ctx);
-  if (!info) {
-    return 0;
-  }
-  emit_from_start(ctx, info, PLANE_LLITE, OP_READ, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
-  bpf_map_delete_elem(&ll_read_map, &tid);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  emit_from_start(ctx, &info, PLANE_LLITE, OP_READ, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_file_write_iter")
 int ll_file_write_iter_enter(struct pt_regs *ctx) {
-  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !mount_matches(s_dev)) {
-    return 0;
-  }
   fill_start_info(&info, 0);
-  bpf_map_update_elem(&ll_write_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  return 0;
-}
-
-SEC("kretprobe/ll_file_write_iter")
-int ll_file_write_iter_exit(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  struct start_info *info = bpf_map_lookup_elem(&ll_write_map, &tid);
-  long bytes = PT_REGS_RC(ctx);
-  if (!info) {
-    return 0;
-  }
-  emit_from_start(ctx, info, PLANE_LLITE, OP_WRITE, (bpf_ktime_get_ns() - info->start_ns) / 1000, bytes > 0 ? (__u64)bytes : 0, 0);
-  bpf_map_delete_elem(&ll_write_map, &tid);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  emit_from_start(ctx, &info, PLANE_LLITE, OP_WRITE, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_fsync")
 int ll_fsync_enter(struct pt_regs *ctx) {
-  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
-  if (!read_file_dev(file, &s_dev) || !mount_matches(s_dev)) {
-    return 0;
-  }
   fill_start_info(&info, 0);
-  bpf_map_update_elem(&ll_fsync_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  return 0;
-}
-
-SEC("kretprobe/ll_fsync")
-int ll_fsync_exit(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  struct start_info *info = bpf_map_lookup_elem(&ll_fsync_map, &tid);
-  if (!info) {
-    return 0;
-  }
-  emit_from_start(ctx, info, PLANE_LLITE, OP_FSYNC, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, 0);
-  bpf_map_delete_elem(&ll_fsync_map, &tid);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  emit_from_start(ctx, &info, PLANE_LLITE, OP_FSYNC, 0, 0, 0);
   return 0;
 }
 
@@ -323,6 +230,7 @@ int ptlrpc_send_new_req_enter(struct pt_regs *ctx) {
     return 0;
   }
   fill_start_info(&info, req_ptr);
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
   bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &tracked, BPF_ANY);
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr);
   return 0;
@@ -342,6 +250,9 @@ int ptlrpc_queue_wait_enter(struct pt_regs *ctx) {
     return 0;
   }
   fill_start_info(&info, req_ptr);
+  if (selected_ok) {
+    bpf_map_delete_elem(&selected_mount_tids, &tid);
+  }
   bpf_map_update_elem(&rpc_wait_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&tracked_reqs, &req_ptr, &tracked_value, BPF_ANY);
   return 0;

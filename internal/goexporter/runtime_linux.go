@@ -73,15 +73,10 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 
 	required := []probeSpec{
 		{"ll_lookup_nd", "ll_lookup_nd_enter", false, false},
-		{"ll_lookup_nd", "ll_lookup_nd_exit", true, false},
 		{"ll_file_open", "ll_file_open_enter", false, false},
-		{"ll_file_open", "ll_file_open_exit", true, false},
 		{"ll_file_read_iter", "ll_file_read_iter_enter", false, false},
-		{"ll_file_read_iter", "ll_file_read_iter_exit", true, false},
 		{"ll_file_write_iter", "ll_file_write_iter_enter", false, false},
-		{"ll_file_write_iter", "ll_file_write_iter_exit", true, false},
 		{"ll_fsync", "ll_fsync_enter", false, false},
-		{"ll_fsync", "ll_fsync_exit", true, false},
 	}
 	optional := []probeSpec{
 		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_enter", false, true},

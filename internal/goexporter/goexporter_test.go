@@ -89,6 +89,29 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	}
 }
 
+func TestAggregatorKeepsZeroValuedLlIteSeries(t *testing.T) {
+	t.Parallel()
+
+	aggregator := NewAggregator()
+	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0})
+
+	metrics := aggregator.Collect()
+	names := map[string]bool{}
+	for _, metric := range metrics {
+		names[metric.Name] = true
+	}
+
+	if !names["lustre.client.access.operations"] {
+		t.Fatalf("missing access operations metric: %#v", metrics)
+	}
+	if !names["lustre.client.access.duration"] {
+		t.Fatalf("missing zero-valued duration metric: %#v", metrics)
+	}
+	if !names["lustre.client.data.bytes"] {
+		t.Fatalf("missing zero-valued data bytes metric: %#v", metrics)
+	}
+}
+
 func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
