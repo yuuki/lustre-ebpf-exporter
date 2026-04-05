@@ -32,11 +32,16 @@ def test_expected_lima_e2e_files_exist() -> None:
         "e2e/lima/scripts/provision-hosts.sh",
         "e2e/lima/scripts/verify-cluster.sh",
         "e2e/lima/scripts/verify-observer.sh",
+        "e2e/lima/scripts/verify-observer-go.sh",
         "e2e/lima/guest/common.sh",
         "e2e/lima/guest/server-setup.sh",
         "e2e/lima/guest/client-setup.sh",
         "tools/lustre_client_observer.py",
         "tools/lustre_client_trace.sh",
+        "cmd/lustre-client-observer/main.go",
+        "internal/bpf/lustre_client_observer.bpf.c",
+        "Makefile",
+        "go.mod",
     ]
 
     for relpath in expected:
@@ -251,6 +256,40 @@ def test_client_observer_wrapper_executes_python_agent() -> None:
     assert "--dry-run" in script
 
 
+def test_go_exporter_cli_uses_standard_prometheus_web_flags() -> None:
+    main = read_text("cmd/lustre-client-observer/main.go")
+
+    assert '"--web.listen-address"' not in main
+    assert '"web.listen-address"' in main
+    assert '"web.telemetry-path"' in main
+    assert '"--mount"' not in main
+    assert '"mount"' in main
+    assert '"bpf-object"' in main
+    assert '"legacy-symbol-allow-missing"' in main
+
+
+def test_makefile_wires_bpf2go_build_and_stage_targets() -> None:
+    makefile = read_text("Makefile")
+
+    assert "github.com/cilium/ebpf/cmd/bpf2go" in makefile
+    assert "generate-go-exporter" in makefile
+    assert "build-go-exporter" in makefile
+    assert "stage-go-exporter" in makefile
+    assert "dist/$(GOOS)-$(GOARCH)" in makefile
+
+
+def test_go_verify_script_scrapes_prometheus_metrics() -> None:
+    script = read_text("e2e/lima/scripts/verify-observer-go.sh")
+
+    assert "curl -fsS http://127.0.0.1:9108/metrics" in script
+    assert "--web.listen-address :9108" in script
+    assert "--web.telemetry-path /metrics" in script
+    assert "--bpf-object" in script
+    assert "lustre_client_access_operations_total" in script
+    assert "lustre_client_access_duration_seconds" in script
+    assert "lustre_client_data_bytes_total" in script
+
+
 def test_verify_observer_script_runs_aggregated_observer_dry_run() -> None:
     script = read_text("e2e/lima/scripts/verify-observer.sh")
 
@@ -274,6 +313,8 @@ def test_root_readme_documents_observer_architecture() -> None:
     assert "Prometheus Exporter" in readme
     assert "lustre_client_access_operations_total" in readme
     assert "lustre_client_rpc_wait_duration_seconds" in readme
+    assert "Go CO-RE" in readme
+    assert "web.listen-address" in readme
 
 
 def test_provision_hosts_retries_guest_setup_after_kernel_switch_reboot() -> None:

@@ -4,9 +4,9 @@
 
 ## Architecture
 
-- `bpftrace` attaches to `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync`, `ptlrpc_send_new_req`, `ptlrpc_queue_wait`, and `__ptlrpc_free_req`, and emits raw events.
-- The Python agent aggregates over 10-second windows, classifies events into `metadata` and `data`, assigns `user|worker|daemon` actor types, and aggregates by uid and process name.
-- The primary always-on publication surface is a `Prometheus Exporter`. The agent publishes aggregated metrics on `/metrics`, and can optionally mirror the same aggregates to `OTLP`. When no backend is needed, `--dry-run` prints aggregated JSON to stdout.
+- Legacy path: `bpftrace` attaches to `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync`, `ptlrpc_send_new_req`, `ptlrpc_queue_wait`, and `__ptlrpc_free_req`, and emits raw events that the Python agent aggregates.
+- Preferred path: a Go CO-RE exporter loads a prebuilt eBPF object, reads normalized events over a ring buffer, aggregates over 10-second windows, and exposes a Prometheus Exporter.
+- Both implementations classify events into `metadata` and `data`, assign `user|worker|daemon` actor types, and aggregate by uid and process name.
 - The current MVP resolves the target Lustre mount to a `(major, minor)` device identity and filters llite/PTLRPC activity to the selected mount.
 
 ## Metrics
@@ -22,7 +22,7 @@ Prometheus labels are `fs`, `mount`, `access_class`, `op`, `uid`, `process`, and
 
 ## Usage
 
-Run as a Prometheus Exporter:
+Run the legacy Python exporter:
 
 ```bash
 tools/lustre_client_trace.sh \
@@ -33,7 +33,7 @@ tools/lustre_client_trace.sh \
 
 The exporter publishes metrics on `http://<host>:9108/metrics`.
 
-Mirror to an OTLP Collector as well:
+Mirror the legacy Python exporter to an OTLP Collector as well:
 
 ```bash
 tools/lustre_client_trace.sh \
@@ -52,5 +52,17 @@ tools/lustre_client_trace.sh \
   --duration 30 \
   --dry-run
 ```
+
+Run the preferred Go CO-RE exporter:
+
+```bash
+dist/linux-amd64/lustre-client-observer \
+  --mount /mnt/lustre \
+  --web.listen-address :9108 \
+  --web.telemetry-path /metrics \
+  --bpf-object dist/linux-amd64/lustre_client_observer.bpf.o
+```
+
+The Go exporter uses the standard Prometheus exporter style flags `--web.listen-address` and `--web.telemetry-path`.
 
 For Lima-based verification, see [e2e/lima/README.md](/Users/y-tsubouchi/src/github.com/yuuki/otel-lustre-tracer/e2e/lima/README.md) and [verify-observer.sh](/Users/y-tsubouchi/src/github.com/yuuki/otel-lustre-tracer/e2e/lima/scripts/verify-observer.sh).
