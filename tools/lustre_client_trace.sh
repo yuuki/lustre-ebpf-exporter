@@ -9,7 +9,7 @@ Usage: lustre_client_trace.sh [--mount /mnt/lustre] [--duration 15] [--window-se
                              [--collector-endpoint http://collector:4318/v1/metrics]
                              [--dry-run]
 
-Compatibility wrapper for the Python-based Lustre client observer MVP.
+Compatibility wrapper for the Python-based lustre-ebpf-exporter legacy path.
 By default it publishes Prometheus metrics. Use --collector-endpoint to mirror OTLP metrics and --dry-run to print aggregated JSON metrics.
 EOF
 }

@@ -18,8 +18,8 @@ RUN make build-go-exporter GOOS=linux GOARCH=amd64
 RUN make stage-go-exporter GOOS=linux GOARCH=amd64
 
 RUN mkdir -p /out \
- && cp dist/linux-amd64/lustre-client-observer /out/lustre-client-observer \
- && cp dist/linux-amd64/lustre_client_observer.bpf.o /out/lustre_client_observer.bpf.o
+ && cp dist/linux-amd64/lustre-ebpf-exporter /out/lustre-ebpf-exporter \
+ && cp dist/linux-amd64/lustre_ebpf_exporter.bpf.o /out/lustre_ebpf_exporter.bpf.o
 
 FROM scratch AS export
 

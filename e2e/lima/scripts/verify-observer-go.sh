@@ -8,8 +8,8 @@ source "${SCRIPT_DIR}/lib.sh"
 metrics_file="/tmp/lustre-go-observer.metrics"
 log_file="/tmp/lustre-go-observer.log"
 smoke_file="${CLIENT_MOUNTPOINT}/observer-go-smoke.bin"
-binary_path="$(guest_repo_root)/dist/linux-amd64/lustre-client-observer"
-bpf_object_path="$(guest_repo_root)/dist/linux-amd64/lustre_client_observer.bpf.o"
+binary_path="$(guest_repo_root)/dist/linux-amd64/lustre-ebpf-exporter"
+bpf_object_path="$(guest_repo_root)/dist/linux-amd64/lustre_ebpf_exporter.bpf.o"
 
 log "verifying Go CO-RE client-side observer"
 guest_run "${CLIENT_INSTANCE}" sudo bash <<EOF

@@ -38,8 +38,8 @@ def test_expected_lima_e2e_files_exist() -> None:
         "e2e/lima/guest/client-setup.sh",
         "tools/lustre_client_observer.py",
         "tools/lustre_client_trace.sh",
-        "cmd/lustre-client-observer/main.go",
-        "internal/bpf/lustre_client_observer.bpf.c",
+        "cmd/lustre-ebpf-exporter/main.go",
+        "internal/bpf/lustre_ebpf_exporter.bpf.c",
         "Makefile",
         "go.mod",
         "build/docker/go-exporter.Dockerfile",
@@ -258,7 +258,7 @@ def test_client_observer_wrapper_executes_python_agent() -> None:
 
 
 def test_go_exporter_cli_uses_standard_prometheus_web_flags() -> None:
-    main = read_text("cmd/lustre-client-observer/main.go")
+    main = read_text("cmd/lustre-ebpf-exporter/main.go")
 
     assert '"--web.listen-address"' not in main
     assert '"web.listen-address"' in main
@@ -283,7 +283,7 @@ def test_makefile_wires_bpf2go_build_and_stage_targets() -> None:
     assert "docker-build-go-exporter" in makefile
     assert "docker build" in makefile
     assert "dist/$(GOOS)-$(GOARCH)" in makefile
-    assert "find internal/bpf -maxdepth 1 -type f -name 'lustreclientobserver*.o'" in makefile
+    assert "find internal/bpf -maxdepth 1 -type f -name 'lustreebpfexporter*.o'" in makefile
 
 
 def test_go_exporter_dockerfile_builds_linux_artifacts() -> None:
@@ -296,8 +296,8 @@ def test_go_exporter_dockerfile_builds_linux_artifacts() -> None:
     assert "make generate-go-exporter" in dockerfile
     assert "make build-go-exporter" in dockerfile
     assert "make stage-go-exporter" in dockerfile
-    assert "dist/linux-amd64/lustre-client-observer" in dockerfile
-    assert "dist/linux-amd64/lustre_client_observer.bpf.o" in dockerfile
+    assert "dist/linux-amd64/lustre-ebpf-exporter" in dockerfile
+    assert "dist/linux-amd64/lustre_ebpf_exporter.bpf.o" in dockerfile
 
 
 def test_go_verify_script_scrapes_prometheus_metrics() -> None:
@@ -326,7 +326,7 @@ def test_go_runtime_keeps_required_probes_strict_and_optional_degraded() -> None
 
 
 def test_go_bpf_uses_llite_entry_and_syscall_exit_correlation() -> None:
-    program = read_text("internal/bpf/lustre_client_observer.bpf.c")
+    program = read_text("internal/bpf/lustre_ebpf_exporter.bpf.c")
     runtime_linux = read_text("internal/goexporter/runtime_linux.go")
 
     assert "bpf_map_update_elem(&ll_lookup_map" in program
@@ -341,7 +341,7 @@ def test_go_bpf_uses_llite_entry_and_syscall_exit_correlation() -> None:
 
 
 def test_go_bpf_source_uses_core_access_and_syscall_retvals() -> None:
-    source = read_text("internal/bpf/lustre_client_observer.bpf.c")
+    source = read_text("internal/bpf/lustre_ebpf_exporter.bpf.c")
 
     assert "#include <bpf/bpf_core_read.h>" in source
     assert "BPF_CORE_READ" in source
@@ -368,7 +368,7 @@ def test_verify_observer_script_runs_aggregated_observer_dry_run() -> None:
 def test_root_readme_documents_observer_architecture() -> None:
     readme = read_text("README.md")
 
-    assert "lustre-client-observer" in readme
+    assert "lustre-ebpf-exporter" in readme
     assert "llite" in readme
     assert "PtlRPC" in readme
     assert "Prometheus Exporter" in readme

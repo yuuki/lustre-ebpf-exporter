@@ -628,7 +628,7 @@ class OpenTelemetryMetricExporter:
         provider = MeterProvider(resource=Resource.create(resource_attributes), metric_readers=[reader])
         metrics.set_meter_provider(provider)
         self._provider = provider
-        meter = metrics.get_meter("lustre-client-observer", "0.1.0")
+        meter = metrics.get_meter("lustre-ebpf-exporter", "0.1.0")
         self._counters = {
             "lustre.client.access.operations": meter.create_counter(
                 "lustre.client.access.operations",
@@ -685,7 +685,7 @@ class OpenTelemetryMetricExporter:
 def default_resource_attributes(args: argparse.Namespace) -> dict[str, str]:
     host_name = socket.gethostname()
     return {
-        "service.name": "lustre-client-observer",
+        "service.name": "lustre-ebpf-exporter",
         "service.version": args.service_version,
         "host.name": host_name,
         "host.id": args.host_id or host_name,

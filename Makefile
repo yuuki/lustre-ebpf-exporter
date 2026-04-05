@@ -11,23 +11,23 @@ BPF_TARGET_ARCH ?= arm64
 endif
 BPF_CFLAGS ?= -I. -D__TARGET_ARCH_$(BPF_TARGET_ARCH)
 DIST_DIR ?= dist/$(GOOS)-$(GOARCH)
-EXPORTER_BIN ?= $(DIST_DIR)/lustre-client-observer
-BPF_OBJECT ?= $(DIST_DIR)/lustre_client_observer.bpf.o
-DOCKER_BUILDER_IMAGE ?= lustre-client-observer-go-builder
+EXPORTER_BIN ?= $(DIST_DIR)/lustre-ebpf-exporter
+BPF_OBJECT ?= $(DIST_DIR)/lustre_ebpf_exporter.bpf.o
+DOCKER_BUILDER_IMAGE ?= lustre-ebpf-exporter-go-builder
 DOCKERFILE_GO_EXPORTER ?= build/docker/go-exporter.Dockerfile
 
 .PHONY: generate-go-exporter
 generate-go-exporter:
-	cd internal/bpf && $(BPF2GO) -cc $(BPF_CLANG) -target $(GOARCH) -go-package bpf lustreclientobserver ./lustre_client_observer.bpf.c -- $(BPF_CFLAGS)
+	cd internal/bpf && $(BPF2GO) -cc $(BPF_CLANG) -target $(GOARCH) -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- $(BPF_CFLAGS)
 
 .PHONY: build-go-exporter
 build-go-exporter:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-client-observer
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-ebpf-exporter
 
 .PHONY: stage-go-exporter
 stage-go-exporter:
 	mkdir -p $(DIST_DIR)
-	obj="$$(find internal/bpf -maxdepth 1 -type f -name 'lustreclientobserver*.o' | head -n1)"; \
+	obj="$$(find internal/bpf -maxdepth 1 -type f -name 'lustreebpfexporter*.o' | head -n1)"; \
 	test -n "$${obj}" && cp "$${obj}" $(BPF_OBJECT)
 
 .PHONY: test-go

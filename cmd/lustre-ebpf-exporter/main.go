@@ -52,7 +52,7 @@ func main() {
 func defaultBPFObjectPath() string {
 	exePath, err := os.Executable()
 	if err != nil {
-		return "lustre_client_observer.bpf.o"
+		return "lustre_ebpf_exporter.bpf.o"
 	}
-	return filepath.Join(filepath.Dir(exePath), "lustre_client_observer.bpf.o")
+	return filepath.Join(filepath.Dir(exePath), "lustre_ebpf_exporter.bpf.o")
 }
