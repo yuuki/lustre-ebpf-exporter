@@ -1,6 +1,9 @@
 package goexporter
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	PlaneLLite  = "llite"
@@ -81,4 +84,8 @@ type MountInfo struct {
 	FSName string
 	Major  uint32
 	Minor  uint32
+}
+
+func sanitizeComm(raw []byte) string {
+	return strings.Trim(string(raw), "\x00")
 }

@@ -1,6 +1,7 @@
 #include <linux/bpf.h>
 #include <linux/ptrace.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
 
 #define TASK_COMM_LEN 16
@@ -19,6 +20,7 @@ typedef unsigned char __u8;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
 
+#pragma clang attribute push(__attribute__((preserve_access_index)), apply_to = record)
 struct super_block {
   __u32 s_dev;
 };
@@ -34,6 +36,7 @@ struct file {
 struct kiocb {
   struct file *ki_filp;
 };
+#pragma clang attribute pop
 
 struct observer_config {
   __u32 target_major;
@@ -79,7 +82,8 @@ struct {
   __uint(max_entries, 8192);
   __type(key, __u64);
   __type(value, struct start_info);
-} rpc_wait_map SEC(".maps");
+} ll_lookup_map SEC(".maps"), ll_open_map SEC(".maps"), ll_read_map SEC(".maps"),
+    ll_write_map SEC(".maps"), ll_fsync_map SEC(".maps"), rpc_wait_map SEC(".maps");
 
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
@@ -112,41 +116,30 @@ static __always_inline int mount_matches(__u32 s_dev) {
 }
 
 static __always_inline int read_inode_dev(struct inode *inode, __u32 *s_dev) {
-  struct super_block *sb = 0;
   if (!inode) {
     return 0;
   }
-  if (bpf_probe_read_kernel(&sb, sizeof(sb), &inode->i_sb)) {
-    return 0;
-  }
+  struct super_block *sb = BPF_CORE_READ(inode, i_sb);
   if (!sb) {
     return 0;
   }
-  if (bpf_probe_read_kernel(s_dev, sizeof(*s_dev), &sb->s_dev)) {
-    return 0;
-  }
+  *s_dev = BPF_CORE_READ(sb, s_dev);
   return 1;
 }
 
 static __always_inline int read_file_dev(struct file *file, __u32 *s_dev) {
-  struct inode *inode = 0;
   if (!file) {
     return 0;
   }
-  if (bpf_probe_read_kernel(&inode, sizeof(inode), &file->f_inode)) {
-    return 0;
-  }
+  struct inode *inode = BPF_CORE_READ(file, f_inode);
   return read_inode_dev(inode, s_dev);
 }
 
 static __always_inline int read_kiocb_dev(struct kiocb *kiocb, __u32 *s_dev) {
-  struct file *file = 0;
   if (!kiocb) {
     return 0;
   }
-  if (bpf_probe_read_kernel(&file, sizeof(file), &kiocb->ki_filp)) {
-    return 0;
-  }
+  struct file *file = BPF_CORE_READ(kiocb, ki_filp);
   return read_file_dev(file, s_dev);
 }
 
@@ -164,58 +157,188 @@ static __always_inline int emit_from_start(void *ctx, struct start_info *info, _
   return 0;
 }
 
+#if defined(__TARGET_ARCH_x86)
+#define SYSCALL_OPENAT "__x64_sys_openat"
+#define SYSCALL_OPENAT2 "__x64_sys_openat2"
+#define SYSCALL_READ "__x64_sys_read"
+#define SYSCALL_WRITE "__x64_sys_write"
+#define SYSCALL_FSYNC "__x64_sys_fsync"
+#elif defined(__TARGET_ARCH_arm64)
+#define SYSCALL_OPENAT "__arm64_sys_openat"
+#define SYSCALL_OPENAT2 "__arm64_sys_openat2"
+#define SYSCALL_READ "__arm64_sys_read"
+#define SYSCALL_WRITE "__arm64_sys_write"
+#define SYSCALL_FSYNC "__arm64_sys_fsync"
+#else
+#error Unsupported target architecture
+#endif
+
 SEC("kprobe/ll_lookup_nd")
 int ll_lookup_nd_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
+  if (!read_inode_dev(inode, &s_dev) || !mount_matches(s_dev)) {
+    return 0;
+  }
   fill_start_info(&info, 0);
+  bpf_map_update_elem(&ll_lookup_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  emit_from_start(ctx, &info, PLANE_LLITE, OP_LOOKUP, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_file_open")
 int ll_file_open_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
+  if (!read_inode_dev(inode, &s_dev) || !mount_matches(s_dev)) {
+    return 0;
+  }
   fill_start_info(&info, 0);
+  bpf_map_update_elem(&ll_open_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  emit_from_start(ctx, &info, PLANE_LLITE, OP_OPEN, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_file_read_iter")
 int ll_file_read_iter_enter(struct pt_regs *ctx) {
+  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
+  if (!read_kiocb_dev(kiocb, &s_dev) || !mount_matches(s_dev)) {
+    return 0;
+  }
   fill_start_info(&info, 0);
+  bpf_map_update_elem(&ll_read_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  emit_from_start(ctx, &info, PLANE_LLITE, OP_READ, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_file_write_iter")
 int ll_file_write_iter_enter(struct pt_regs *ctx) {
+  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
+  if (!read_kiocb_dev(kiocb, &s_dev) || !mount_matches(s_dev)) {
+    return 0;
+  }
   fill_start_info(&info, 0);
+  bpf_map_update_elem(&ll_write_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  emit_from_start(ctx, &info, PLANE_LLITE, OP_WRITE, 0, 0, 0);
   return 0;
 }
 
 SEC("kprobe/ll_fsync")
 int ll_fsync_enter(struct pt_regs *ctx) {
+  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
   __u8 selected = 1;
+  if (!read_file_dev(file, &s_dev) || !mount_matches(s_dev)) {
+    return 0;
+  }
   fill_start_info(&info, 0);
+  bpf_map_update_elem(&ll_fsync_map, &tid, &info, BPF_ANY);
   bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
-  emit_from_start(ctx, &info, PLANE_LLITE, OP_FSYNC, 0, 0, 0);
+  return 0;
+}
+
+static __always_inline int emit_llite_event(void *ctx, struct start_info *info, __u8 op, long ret, int emit_bytes) {
+  __u64 duration_us = 0;
+  __u64 size_bytes = 0;
+  duration_us = (bpf_ktime_get_ns() - info->start_ns) / 1000;
+  if (emit_bytes && ret > 0) {
+    size_bytes = (__u64)ret;
+  }
+  emit_from_start(ctx, info, PLANE_LLITE, op, duration_us, size_bytes, 0);
+  return 0;
+}
+
+SEC("kretprobe/" SYSCALL_OPENAT)
+int sys_exit_openat(struct pt_regs *ctx) {
+  __u64 tid = current_tid();
+  long ret = PT_REGS_RC(ctx);
+  struct start_info *lookup_info = bpf_map_lookup_elem(&ll_lookup_map, &tid);
+  struct start_info *open_info = bpf_map_lookup_elem(&ll_open_map, &tid);
+  if (lookup_info) {
+    emit_llite_event(ctx, lookup_info, OP_LOOKUP, ret, 0);
+    bpf_map_delete_elem(&ll_lookup_map, &tid);
+  }
+  if (open_info) {
+    emit_llite_event(ctx, open_info, OP_OPEN, ret, 0);
+    bpf_map_delete_elem(&ll_open_map, &tid);
+  }
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  return 0;
+}
+
+SEC("kretprobe/" SYSCALL_OPENAT2)
+int sys_exit_openat2(struct pt_regs *ctx) {
+  __u64 tid = current_tid();
+  long ret = PT_REGS_RC(ctx);
+  struct start_info *lookup_info = bpf_map_lookup_elem(&ll_lookup_map, &tid);
+  struct start_info *open_info = bpf_map_lookup_elem(&ll_open_map, &tid);
+  if (lookup_info) {
+    emit_llite_event(ctx, lookup_info, OP_LOOKUP, ret, 0);
+    bpf_map_delete_elem(&ll_lookup_map, &tid);
+  }
+  if (open_info) {
+    emit_llite_event(ctx, open_info, OP_OPEN, ret, 0);
+    bpf_map_delete_elem(&ll_open_map, &tid);
+  }
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  return 0;
+}
+
+SEC("kretprobe/" SYSCALL_READ)
+int sys_exit_read(struct pt_regs *ctx) {
+  __u64 tid = current_tid();
+  long ret = PT_REGS_RC(ctx);
+  struct start_info *info = bpf_map_lookup_elem(&ll_read_map, &tid);
+  if (!info) {
+    return 0;
+  }
+  emit_llite_event(ctx, info, OP_READ, ret, 1);
+  bpf_map_delete_elem(&ll_read_map, &tid);
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  return 0;
+}
+
+SEC("kretprobe/" SYSCALL_WRITE)
+int sys_exit_write(struct pt_regs *ctx) {
+  __u64 tid = current_tid();
+  long ret = PT_REGS_RC(ctx);
+  struct start_info *info = bpf_map_lookup_elem(&ll_write_map, &tid);
+  if (!info) {
+    return 0;
+  }
+  emit_llite_event(ctx, info, OP_WRITE, ret, 1);
+  bpf_map_delete_elem(&ll_write_map, &tid);
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  return 0;
+}
+
+SEC("kretprobe/" SYSCALL_FSYNC)
+int sys_exit_fsync(struct pt_regs *ctx) {
+  __u64 tid = current_tid();
+  long ret = PT_REGS_RC(ctx);
+  struct start_info *info = bpf_map_lookup_elem(&ll_fsync_map, &tid);
+  if (!info) {
+    return 0;
+  }
+  emit_llite_event(ctx, info, OP_FSYNC, ret, 0);
+  bpf_map_delete_elem(&ll_fsync_map, &tid);
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
 }
 

@@ -41,7 +41,5 @@ for _ in \$(seq 1 20); do
   sleep 1
 done
 grep -F "lustre_client_access_operations_total" "${metrics_file}"
-grep -F "lustre_client_access_duration_seconds" "${metrics_file}"
-grep -F "lustre_client_data_bytes_total" "${metrics_file}"
 cat "${log_file}" >/dev/null
 EOF

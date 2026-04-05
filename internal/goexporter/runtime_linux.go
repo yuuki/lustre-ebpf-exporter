@@ -3,12 +3,12 @@
 package goexporter
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -32,19 +32,6 @@ const (
 	rawOpFreeReq    uint8 = 8
 )
 
-type rawEvent struct {
-	Plane      uint8
-	Op         uint8
-	_          [6]byte
-	UID        uint32
-	PID        uint32
-	_          uint32
-	DurationUS uint64
-	SizeBytes  uint64
-	RequestPtr uint64
-	Comm       [16]byte
-}
-
 type bpfConfig struct {
 	TargetMajor uint32
 	TargetMinor uint32
@@ -58,6 +45,8 @@ type linuxEventSource struct {
 	once       sync.Once
 	done       chan struct{}
 	started    bool
+	debugHex   bool
+	loggedHex  bool
 }
 
 func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (EventSource, error) {
@@ -72,17 +61,22 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 	}
 
 	required := []probeSpec{
-		{"ll_lookup_nd", "ll_lookup_nd_enter", false, false},
-		{"ll_file_open", "ll_file_open_enter", false, false},
-		{"ll_file_read_iter", "ll_file_read_iter_enter", false, false},
-		{"ll_file_write_iter", "ll_file_write_iter_enter", false, false},
-		{"ll_fsync", "ll_fsync_enter", false, false},
+		{symbol: "ll_lookup_nd", program: "ll_lookup_nd_enter"},
+		{symbol: "ll_file_open", program: "ll_file_open_enter"},
+		{symbol: "ll_file_read_iter", program: "ll_file_read_iter_enter"},
+		{symbol: "ll_file_write_iter", program: "ll_file_write_iter_enter"},
+		{symbol: "ll_fsync", program: "ll_fsync_enter"},
+		{symbol: "__x64_sys_openat", program: "sys_exit_openat", ret: true},
+		{symbol: "__x64_sys_read", program: "sys_exit_read", ret: true},
+		{symbol: "__x64_sys_write", program: "sys_exit_write", ret: true},
+		{symbol: "__x64_sys_fsync", program: "sys_exit_fsync", ret: true},
 	}
 	optional := []probeSpec{
-		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_enter", false, true},
-		{"ptlrpc_queue_wait", "ptlrpc_queue_wait_exit", true, true},
-		{"ptlrpc_send_new_req", "ptlrpc_send_new_req_enter", false, true},
-		{"__ptlrpc_free_req", "ptlrpc_free_req_enter", false, true},
+		{symbol: "__x64_sys_openat2", program: "sys_exit_openat2", ret: true, optional: true},
+		{symbol: "ptlrpc_queue_wait", program: "ptlrpc_queue_wait_enter", optional: true},
+		{symbol: "ptlrpc_queue_wait", program: "ptlrpc_queue_wait_exit", ret: true, optional: true},
+		{symbol: "ptlrpc_send_new_req", program: "ptlrpc_send_new_req_enter", optional: true},
+		{symbol: "__ptlrpc_free_req", program: "ptlrpc_free_req_enter", optional: true},
 	}
 
 	spec, err := ebpf.LoadCollectionSpec(cfg.BPFObjectPath)
@@ -120,6 +114,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		reader:     reader,
 		collection: collection,
 		done:       make(chan struct{}),
+		debugHex:   os.Getenv("LUSTRE_OBSERVER_DEBUG_HEX") == "1",
 	}
 
 	if err := source.attachAll(required, false); err != nil {
@@ -137,10 +132,12 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 }
 
 type probeSpec struct {
-	symbol   string
-	program  string
-	ret      bool
-	optional bool
+	symbol          string
+	program         string
+	ret             bool
+	optional        bool
+	tracepointGroup string
+	tracepointName  string
 }
 
 func (s *linuxEventSource) attachAll(specs []probeSpec, allowMissing bool) error {
@@ -157,7 +154,9 @@ func (s *linuxEventSource) attachAll(specs []probeSpec, allowMissing bool) error
 			lnk link.Link
 			err error
 		)
-		if spec.ret {
+		if spec.tracepointGroup != "" {
+			lnk, err = link.Tracepoint(spec.tracepointGroup, spec.tracepointName, prog, nil)
+		} else if spec.ret {
 			lnk, err = link.Kretprobe(spec.symbol, prog, nil)
 		} else {
 			lnk, err = link.Kprobe(spec.symbol, prog, nil)
@@ -194,6 +193,10 @@ func (s *linuxEventSource) readLoop(ctx context.Context) {
 		if record.LostSamples > 0 {
 			log.Printf("warning: lost %d perf samples", record.LostSamples)
 			continue
+		}
+		if s.debugHex && !s.loggedHex {
+			s.loggedHex = true
+			slog.Info("debug raw sample", "len", len(record.RawSample), "hex", fmt.Sprintf("%x", record.RawSample))
 		}
 		event, err := decodeRawEvent(record.RawSample)
 		if err != nil {
@@ -232,27 +235,26 @@ func (s *linuxEventSource) Close() error {
 }
 
 func decodeRawEvent(sample []byte) (Event, error) {
-	var raw rawEvent
-	if err := binary.Read(bytes.NewReader(sample), binary.LittleEndian, &raw); err != nil {
-		return Event{}, err
+	if len(sample) < 68 {
+		return Event{}, fmt.Errorf("short raw event: got %d bytes", len(sample))
 	}
-	plane, err := planeName(raw.Plane)
+	plane, err := planeName(sample[0])
 	if err != nil {
 		return Event{}, err
 	}
-	op, err := opName(raw.Op)
+	op, err := opName(sample[1])
 	if err != nil {
 		return Event{}, err
 	}
 	return Event{
 		Plane:      plane,
 		Op:         op,
-		UID:        raw.UID,
-		PID:        raw.PID,
-		Comm:       strings.TrimRight(string(raw.Comm[:]), "\x00"),
-		DurationUS: raw.DurationUS,
-		SizeBytes:  raw.SizeBytes,
-		RequestPtr: raw.RequestPtr,
+		UID:        binary.LittleEndian.Uint32(sample[8:12]),
+		PID:        binary.LittleEndian.Uint32(sample[12:16]),
+		Comm:       sanitizeComm(sample[52:68]),
+		DurationUS: binary.LittleEndian.Uint64(sample[28:36]),
+		SizeBytes:  binary.LittleEndian.Uint64(sample[36:44]),
+		RequestPtr: binary.LittleEndian.Uint64(sample[44:52]),
 	}, nil
 }
 

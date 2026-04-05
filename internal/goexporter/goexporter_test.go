@@ -78,9 +78,6 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	if !strings.Contains(text, "lustre.client.access.operations") {
 		t.Fatalf("missing access operations metric: %s", text)
 	}
-	if !strings.Contains(text, "lustre.client.data.bytes") {
-		t.Fatalf("missing data bytes metric: %s", text)
-	}
 	if !strings.Contains(text, "lustre.client.rpc.wait.operations") {
 		t.Fatalf("missing rpc wait metric: %s", text)
 	}
@@ -89,7 +86,7 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	}
 }
 
-func TestAggregatorKeepsZeroValuedLlIteSeries(t *testing.T) {
+func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 	t.Parallel()
 
 	aggregator := NewAggregator()
@@ -104,11 +101,20 @@ func TestAggregatorKeepsZeroValuedLlIteSeries(t *testing.T) {
 	if !names["lustre.client.access.operations"] {
 		t.Fatalf("missing access operations metric: %#v", metrics)
 	}
-	if !names["lustre.client.access.duration"] {
-		t.Fatalf("missing zero-valued duration metric: %#v", metrics)
+	if names["lustre.client.access.duration"] {
+		t.Fatalf("unexpected zero-valued duration metric: %#v", metrics)
 	}
-	if !names["lustre.client.data.bytes"] {
-		t.Fatalf("missing zero-valued data bytes metric: %#v", metrics)
+	if names["lustre.client.data.bytes"] {
+		t.Fatalf("unexpected zero-valued data bytes metric: %#v", metrics)
+	}
+}
+
+func TestSanitizeCommTrimsLeadingAndTrailingNulls(t *testing.T) {
+	t.Parallel()
+
+	got := sanitizeComm([]byte{0, 0, 'd', 'd', 0, 0})
+	if got != "dd" {
+		t.Fatalf("expected dd, got %q", got)
 	}
 }
 

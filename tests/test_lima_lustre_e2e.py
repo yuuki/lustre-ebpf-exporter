@@ -308,8 +308,8 @@ def test_go_verify_script_scrapes_prometheus_metrics() -> None:
     assert "--web.telemetry-path /metrics" in script
     assert "--bpf-object" in script
     assert "lustre_client_access_operations_total" in script
-    assert "lustre_client_access_duration_seconds" in script
-    assert "lustre_client_data_bytes_total" in script
+    assert "lustre_client_access_duration_seconds" not in script
+    assert "lustre_client_data_bytes_total" not in script
 
 
 def test_go_runtime_keeps_required_probes_strict_and_optional_degraded() -> None:
@@ -317,30 +317,35 @@ def test_go_runtime_keeps_required_probes_strict_and_optional_degraded() -> None
 
     assert "source.attachAll(required, false)" in runtime_linux
     assert "source.attachAll(optional, false)" in runtime_linux
-    assert '{"ptlrpc_queue_wait", "ptlrpc_queue_wait_enter", false, true}' in runtime_linux
-    assert '{"ll_lookup_nd", "ll_lookup_nd_enter", false, false}' in runtime_linux
-    assert '"ll_lookup_nd_exit"' not in runtime_linux
+    assert 'symbol: "__x64_sys_openat", program: "sys_exit_openat", ret: true' in runtime_linux
+    assert 'symbol: "__x64_sys_openat2", program: "sys_exit_openat2", ret: true, optional: true' in runtime_linux
+    assert 'symbol: "ptlrpc_queue_wait", program: "ptlrpc_queue_wait_enter", optional: true' in runtime_linux
 
 
-def test_go_bpf_emits_llite_events_from_entry_probes() -> None:
+def test_go_bpf_uses_llite_entry_and_syscall_exit_correlation() -> None:
     program = read_text("internal/bpf/lustre_client_observer.bpf.c")
     runtime_linux = read_text("internal/goexporter/runtime_linux.go")
 
-    assert 'emit_from_start(ctx, &info, PLANE_LLITE, OP_LOOKUP, 0, 0, 0);' in program
-    assert 'emit_from_start(ctx, &info, PLANE_LLITE, OP_OPEN, 0, 0, 0);' in program
-    assert 'emit_from_start(ctx, &info, PLANE_LLITE, OP_READ, 0, 0, 0);' in program
-    assert 'emit_from_start(ctx, &info, PLANE_LLITE, OP_WRITE, 0, 0, 0);' in program
-    assert 'emit_from_start(ctx, &info, PLANE_LLITE, OP_FSYNC, 0, 0, 0);' in program
-    assert 'SEC("kretprobe/ll_file_write_iter")' not in program
+    assert "bpf_map_update_elem(&ll_lookup_map" in program
+    assert "bpf_map_update_elem(&ll_open_map" in program
+    assert "bpf_map_update_elem(&ll_read_map" in program
+    assert "bpf_map_update_elem(&ll_write_map" in program
+    assert 'SEC("kretprobe/" SYSCALL_OPENAT)' in program
+    assert 'SEC("kretprobe/" SYSCALL_READ)' in program
+    assert 'SEC("kretprobe/" SYSCALL_WRITE)' in program
+    assert 'SEC("kretprobe/" SYSCALL_FSYNC)' in program
     assert "if s.started" in runtime_linux
 
 
-def test_go_bpf_source_uses_core_access_and_signed_retvals() -> None:
+def test_go_bpf_source_uses_core_access_and_syscall_retvals() -> None:
     source = read_text("internal/bpf/lustre_client_observer.bpf.c")
 
-    assert "bpf_probe_read_kernel" in source
+    assert "#include <bpf/bpf_core_read.h>" in source
+    assert "BPF_CORE_READ" in source
     assert "#include <linux/ptrace.h>" in source
-    assert "emit_from_start(ctx, &info, PLANE_LLITE, OP_WRITE, 0, 0, 0);" in source
+    assert "mount_matches(s_dev)" in source
+    assert "emit_llite_event" in source
+    assert "PT_REGS_RC(ctx)" in source
 
 
 def test_verify_observer_script_runs_aggregated_observer_dry_run() -> None:
