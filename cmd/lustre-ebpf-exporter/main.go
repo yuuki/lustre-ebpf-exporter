@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -32,7 +31,6 @@ func main() {
 	flag.IntVar(&windowSeconds, "window-seconds", 10, "Aggregation window size in seconds")
 	flag.IntVar(&durationSeconds, "duration", 0, "Stop after the given duration in seconds; 0 means run until interrupted")
 	flag.BoolVar(&cfg.Once, "once", false, "Flush one aggregation window and exit")
-	flag.StringVar(&cfg.BPFObjectPath, "bpf-object", defaultBPFObjectPath(), "Path to the CO-RE BPF object")
 	flag.BoolVar(
 		&cfg.LegacySymbolAllowMissing,
 		"legacy-symbol-allow-missing",
@@ -58,7 +56,6 @@ func main() {
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
 
 	log.Printf("Starting lustre-ebpf-exporter")
-	log.Printf("BPF object: %s", cfg.BPFObjectPath)
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
 	log.Printf("Aggregation window: %s", cfg.Window)
 
@@ -68,12 +65,4 @@ func main() {
 	if err := goexporter.Run(ctx, cfg); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func defaultBPFObjectPath() string {
-	exePath, err := os.Executable()
-	if err != nil {
-		return "lustre_ebpf_exporter.bpf.o"
-	}
-	return filepath.Join(filepath.Dir(exePath), "lustre_ebpf_exporter.bpf.o")
 }

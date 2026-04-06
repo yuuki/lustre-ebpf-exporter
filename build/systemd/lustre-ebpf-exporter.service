@@ -1,0 +1,17 @@
+[Unit]
+Description=Lustre eBPF Client Activity Exporter
+Documentation=https://github.com/yuuki/otel-lustre-tracer
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/lustre-ebpf-exporter
+ExecStart=/usr/local/bin/lustre-ebpf-exporter \
+    --mount $LUSTRE_MOUNT \
+    --web.listen-address $LISTEN_ADDRESS \
+    --web.telemetry-path $TELEMETRY_PATH
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

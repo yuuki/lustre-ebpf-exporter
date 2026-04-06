@@ -16,6 +16,8 @@ import (
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/perf"
 	"github.com/cilium/ebpf/rlimit"
+
+	"github.com/yuuki/otel-lustre-tracer/internal/bpf"
 )
 
 type bpfMountKey struct {
@@ -39,9 +41,6 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, err
 	}
-	if cfg.BPFObjectPath == "" {
-		return nil, fmt.Errorf("--bpf-object is required")
-	}
 
 	required := []probeSpec{
 		{symbol: "ll_lookup_nd", program: "ll_lookup_nd_enter"},
@@ -62,7 +61,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		{symbol: "__ptlrpc_free_req", program: "ptlrpc_free_req_enter", optional: true},
 	}
 
-	spec, err := ebpf.LoadCollectionSpec(cfg.BPFObjectPath)
+	spec, err := bpf.LoadCollectionSpec()
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +77,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	configMap := collection.Maps["config_map"]
 	if configMap == nil {
 		collection.Close()
-		return nil, fmt.Errorf("config_map not found in %s", cfg.BPFObjectPath)
+		return nil, fmt.Errorf("config_map not found in embedded BPF object")
 	}
 	for i, mi := range mountInfos {
 		key := bpfMountKey{Major: mi.Major, Minor: mi.Minor}

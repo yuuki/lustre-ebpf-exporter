@@ -12,7 +12,6 @@ endif
 BPF_CFLAGS ?= -I. -D__TARGET_ARCH_$(BPF_TARGET_ARCH)
 DIST_DIR ?= dist/$(GOOS)-$(GOARCH)
 EXPORTER_BIN ?= $(DIST_DIR)/lustre-ebpf-exporter
-BPF_OBJECT ?= $(DIST_DIR)/lustre_ebpf_exporter.bpf.o
 DOCKER_BUILDER_IMAGE ?= lustre-ebpf-exporter-go-builder
 DOCKERFILE_GO_EXPORTER ?= build/docker/go-exporter.Dockerfile
 
@@ -23,12 +22,6 @@ generate-go-exporter:
 .PHONY: build-go-exporter
 build-go-exporter:
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-ebpf-exporter
-
-.PHONY: stage-go-exporter
-stage-go-exporter:
-	mkdir -p $(DIST_DIR)
-	obj="$$(find internal/bpf -maxdepth 1 -type f -name 'lustreebpfexporter*.o' | head -n1)"; \
-	test -n "$${obj}" && cp "$${obj}" $(BPF_OBJECT)
 
 .PHONY: test-go
 test-go:
@@ -50,3 +43,15 @@ BPF_VERIFIER_IMAGE ?= lustre-bpf-verifier
 verify-bpf:
 	docker build -f $(DOCKERFILE_BPF_VERIFIER) -t $(BPF_VERIFIER_IMAGE) .
 	docker run --rm --privileged $(BPF_VERIFIER_IMAGE)
+
+INSTALL_BIN_DIR ?= /usr/local/bin
+SYSTEMD_UNIT_DIR ?= /etc/systemd/system
+DEFAULT_ENV_DIR ?= /etc/default
+
+.PHONY: install
+install:
+	install -m 755 $(EXPORTER_BIN) $(INSTALL_BIN_DIR)/lustre-ebpf-exporter
+	install -m 644 $(BPF_OBJECT) $(INSTALL_BIN_DIR)/lustre_ebpf_exporter.bpf.o
+	install -m 644 build/systemd/lustre-ebpf-exporter.service $(SYSTEMD_UNIT_DIR)/lustre-ebpf-exporter.service
+	install -m 644 build/systemd/lustre-ebpf-exporter.default $(DEFAULT_ENV_DIR)/lustre-ebpf-exporter
+	systemctl daemon-reload

@@ -68,7 +68,6 @@ type Config struct {
 	Window                   time.Duration
 	Duration                 time.Duration
 	Once                     bool
-	BPFObjectPath            string
 	LegacySymbolAllowMissing bool
 	WebListenAddress         string
 	WebTelemetryPath         string

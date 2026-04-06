@@ -1,0 +1,8 @@
+# Lustre client mount path (required; repeat --mount for multiple mounts)
+LUSTRE_MOUNT=/mnt/lustre
+
+# Prometheus listen address
+LISTEN_ADDRESS=:9108
+
+# Prometheus metrics path
+TELEMETRY_PATH=/metrics

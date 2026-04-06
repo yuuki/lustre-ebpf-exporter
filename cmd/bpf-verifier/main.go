@@ -4,38 +4,31 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/rlimit"
+
+	"github.com/yuuki/otel-lustre-tracer/internal/bpf"
 )
 
 func main() {
-	objPath := flag.String("obj", "", "path to BPF object file")
-	flag.Parse()
-
-	if *objPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: bpf-verifier -obj <path>")
-		os.Exit(2)
-	}
-
-	if err := run(*objPath); err != nil {
+	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(objPath string) error {
+func run() error {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return fmt.Errorf("remove memlock: %w", err)
 	}
 
-	spec, err := ebpf.LoadCollectionSpec(objPath)
+	spec, err := bpf.LoadCollectionSpec()
 	if err != nil {
-		return fmt.Errorf("load spec from %s: %w", objPath, err)
+		return fmt.Errorf("load spec from embedded BPF: %w", err)
 	}
 
 	names := make([]string, 0, len(spec.Programs))
@@ -44,7 +37,7 @@ func run(objPath string) error {
 	}
 	sort.Strings(names)
 
-	fmt.Printf("Verifying %d BPF programs from %s\n", len(names), objPath)
+	fmt.Printf("Verifying %d BPF programs from embedded BPF object\n", len(names))
 	for _, name := range names {
 		fmt.Printf("  %-40s %s\n", name, spec.Programs[name].Type)
 	}
