@@ -83,7 +83,7 @@ func TestResolveMountInfoFromText(t *testing.T) {
 
 func testResolver() *UsernameResolver {
 	r := NewUsernameResolver()
-	r.cache.Store(uint32(1001), "testuser")
+	r.cache[1001] = "testuser"
 	return r
 }
 

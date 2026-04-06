@@ -43,8 +43,7 @@ func TestUsernameResolverCacheHit(t *testing.T) {
 	t.Parallel()
 
 	resolver := NewUsernameResolver()
-	// pre-populate cache
-	resolver.cache.Store(uint32(12345), "cacheduser")
+	resolver.cache[12345] = "cacheduser"
 
 	got := resolver.Resolve(12345)
 	if got != "cacheduser" {
