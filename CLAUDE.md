@@ -40,10 +40,10 @@ bash ./e2e/lima/scripts/verify-observer.sh        # legacy Python
 
 Two planes of observation with identical semantic contracts:
 
-1. **llite** — user-facing workload plane: kprobes on `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync`. Classified as `metadata` or `data` ops.
+1. **llite** — user-facing workload plane: kprobes on `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync`. Each op is classified by `lustre.access.intent`: `namespace_read`, `namespace_mutation`, `data_read`, `data_write`, `sync`.
 2. **PtlRPC** — client-internal impact plane: optional kprobes on `ptlrpc_queue_wait`, `ptlrpc_send_new_req`, `__ptlrpc_free_req`. Degrades gracefully when probes are missing.
 
-Actors are classified as `user`, `worker` (ptlrpcd\_\*), or `daemon`.
+Actors are classified as `user`, `batch_job` (slurm/pbs/sge/lsf), `system_daemon`, or `client_worker` (ptlrpcd\_\*).
 
 ### Go Exporter (`cmd/` + `internal/goexporter/`)
 
@@ -65,7 +65,7 @@ Generates a bpftrace script at runtime, parses tab-delimited `EVENT` lines from 
 ### Key Invariants
 
 - The BPF event struct layout (64 bytes) and op/plane codes must match between `lustre_ebpf_exporter.bpf.c` and `types.go`.
-- Metric attribute keys use OTel conventions internally (`user.id`, `process.name`, `lustre.actor.type`), mapped to Prometheus label names at export time.
+- Metric attribute keys use OTel conventions internally (`user.id`, `process.name`, `lustre.actor.type`, `lustre.access.intent`), mapped to Prometheus label names at export time.
 - Label cardinality is constrained by design: no pid, path, or request pointer in exported labels.
 
 ## Commit Style

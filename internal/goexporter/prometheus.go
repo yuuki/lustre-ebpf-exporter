@@ -33,15 +33,15 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string) (*Prometh
 		registry: registry,
 		accessOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_access_operations_total", Help: "Aggregated llite access operation count"},
-			[]string{"fs", "mount", "access_class", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "access_intent", "op", "uid", "process", "actor_type"},
 		),
 		accessLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			[]string{"fs", "mount", "access_class", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "access_intent", "op", "uid", "process", "actor_type"},
 		),
 		dataBytes: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_data_bytes_total", Help: "Aggregated llite data volume in bytes"},
-			[]string{"fs", "mount", "access_class", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "access_intent", "op", "uid", "process", "actor_type"},
 		),
 		rpcWaitOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_rpc_wait_operations_total", Help: "Aggregated ptlrpc queue wait count"},
@@ -124,8 +124,8 @@ func (e *PrometheusExporter) labels(metric AggregatedMetric) prometheus.Labels {
 		"process":    metric.Attributes["process.name"],
 		"actor_type": metric.Attributes["lustre.actor.type"],
 	}
-	if accessClass, ok := metric.Attributes["lustre.access.class"]; ok {
-		labels["access_class"] = accessClass
+	if accessIntent, ok := metric.Attributes["lustre.access.intent"]; ok {
+		labels["access_intent"] = accessIntent
 	}
 	if op, ok := metric.Attributes["lustre.access.op"]; ok {
 		labels["op"] = op

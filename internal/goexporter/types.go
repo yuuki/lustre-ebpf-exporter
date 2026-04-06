@@ -41,12 +41,14 @@ const (
 )
 
 var (
-	LLiteMetadataOps = map[string]struct{}{
-		OpLookup: {}, OpOpen: {}, OpRename: {}, OpUnlink: {}, OpMkdir: {}, OpRmdir: {},
+	IntentForOp = map[string]string{
+		OpLookup: "namespace_read", OpOpen: "namespace_read",
+		OpRename: "namespace_mutation", OpUnlink: "namespace_mutation",
+		OpMkdir: "namespace_mutation", OpRmdir: "namespace_mutation",
+		OpRead: "data_read", OpWrite: "data_write",
+		OpFsync: "sync",
 	}
-	LLiteDataOps = map[string]struct{}{
-		OpRead: {}, OpWrite: {}, OpFsync: {},
-	}
+	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
 	DaemonNames = map[string]struct{}{
 		"node_exporter":   {},
 		"sshd":            {},

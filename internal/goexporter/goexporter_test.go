@@ -13,28 +13,46 @@ import (
 func TestClassifyActorType(t *testing.T) {
 	t.Parallel()
 
-	if got := ClassifyActorType("ptlrpcd_01_104"); got != "worker" {
-		t.Fatalf("expected worker, got %q", got)
+	if got := ClassifyActorType("ptlrpcd_01_104"); got != "client_worker" {
+		t.Fatalf("expected client_worker, got %q", got)
 	}
-	if got := ClassifyActorType("node_exporter"); got != "daemon" {
-		t.Fatalf("expected daemon, got %q", got)
+	if got := ClassifyActorType("slurmstepd"); got != "batch_job" {
+		t.Fatalf("expected batch_job, got %q", got)
+	}
+	if got := ClassifyActorType("pbs_mom"); got != "batch_job" {
+		t.Fatalf("expected batch_job, got %q", got)
+	}
+	if got := ClassifyActorType("node_exporter"); got != "system_daemon" {
+		t.Fatalf("expected system_daemon, got %q", got)
 	}
 	if got := ClassifyActorType("bash"); got != "user" {
 		t.Fatalf("expected user, got %q", got)
 	}
 }
 
-func TestAccessClassForOp(t *testing.T) {
+func TestAccessIntentForOp(t *testing.T) {
 	t.Parallel()
 
-	if got := AccessClassForOp(OpLookup); got != "metadata" {
-		t.Fatalf("expected metadata, got %q", got)
+	if got := AccessIntentForOp(OpLookup); got != "namespace_read" {
+		t.Fatalf("expected namespace_read, got %q", got)
 	}
-	if got := AccessClassForOp(OpWrite); got != "data" {
-		t.Fatalf("expected data, got %q", got)
+	if got := AccessIntentForOp(OpOpen); got != "namespace_read" {
+		t.Fatalf("expected namespace_read, got %q", got)
 	}
-	if got := AccessClassForOp(OpQueueWait); got != "" {
-		t.Fatalf("expected empty access class, got %q", got)
+	if got := AccessIntentForOp(OpRename); got != "namespace_mutation" {
+		t.Fatalf("expected namespace_mutation, got %q", got)
+	}
+	if got := AccessIntentForOp(OpRead); got != "data_read" {
+		t.Fatalf("expected data_read, got %q", got)
+	}
+	if got := AccessIntentForOp(OpWrite); got != "data_write" {
+		t.Fatalf("expected data_write, got %q", got)
+	}
+	if got := AccessIntentForOp(OpFsync); got != "sync" {
+		t.Fatalf("expected sync, got %q", got)
+	}
+	if got := AccessIntentForOp(OpQueueWait); got != "" {
+		t.Fatalf("expected empty intent, got %q", got)
 	}
 }
 
@@ -237,7 +255,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			Value: 2,
 			Attributes: map[string]string{
 				"user.id": "1001", "process.name": "dd", "lustre.actor.type": "user",
-				"lustre.access.class": "data", "lustre.access.op": "write",
+				"lustre.access.intent": "data_write", "lustre.access.op": "write",
 				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
 			},
 		},
@@ -247,7 +265,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			Histogram: []float64{250, 500},
 			Attributes: map[string]string{
 				"user.id": "1001", "process.name": "dd", "lustre.actor.type": "user",
-				"lustre.access.class": "data", "lustre.access.op": "write",
+				"lustre.access.intent": "data_write", "lustre.access.op": "write",
 				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
 			},
 		},

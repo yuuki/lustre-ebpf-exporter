@@ -25,15 +25,15 @@ func (a *Aggregator) Consume(event Event) {
 	actorType := ClassifyActorType(event.Comm)
 
 	if event.Plane == PlaneLLite {
-		accessClass := AccessClassForOp(event.Op)
-		if accessClass == "" {
+		intent := AccessIntentForOp(event.Op)
+		if intent == "" {
 			return
 		}
 		attrs := map[string]string{
-			"user.id":             uid,
-			"process.name":        event.Comm,
-			"lustre.actor.type":   actorType,
-			"lustre.access.class": accessClass,
+			"user.id":              uid,
+			"process.name":         event.Comm,
+			"lustre.actor.type":    actorType,
+			"lustre.access.intent": intent,
 			"lustre.access.op":    event.Op,
 			"lustre.mount.path":   event.MountPath,
 			"lustre.fs.name":      event.FSName,

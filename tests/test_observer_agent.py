@@ -24,8 +24,10 @@ from lustre_client_observer.agent import (
 
 
 def test_classify_actor_type_distinguishes_worker_and_daemon() -> None:
-    assert classify_actor_type("ptlrpcd_01_104") == "worker"
-    assert classify_actor_type("node_exporter") == "daemon"
+    assert classify_actor_type("ptlrpcd_01_104") == "client_worker"
+    assert classify_actor_type("slurmstepd") == "batch_job"
+    assert classify_actor_type("pbs_mom") == "batch_job"
+    assert classify_actor_type("node_exporter") == "system_daemon"
     assert classify_actor_type("bash") == "user"
 
 
@@ -41,7 +43,7 @@ def test_parse_llite_event_extracts_access_fields() -> None:
     assert event.pid == 4321
     assert event.duration_us == 125
     assert event.size_bytes == 4096
-    assert event.access_class == "data"
+    assert event.access_intent == "data_read"
     assert event.actor_type == "user"
 
 
@@ -52,7 +54,7 @@ def test_parse_ptlrpc_event_infers_worker_actor() -> None:
 
     assert event.plane == "ptlrpc"
     assert event.op == "queue_wait"
-    assert event.actor_type == "worker"
+    assert event.actor_type == "client_worker"
     assert event.request_ptr == "0xffff"
 
 
@@ -84,7 +86,7 @@ def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
         attributes={
             "user.id": "1001",
             "process.name": "dd",
-            "lustre.access.class": "data",
+            "lustre.access.intent": "data_write",
             "lustre.access.op": "write",
             "lustre.actor.type": "user",
         },
@@ -97,7 +99,7 @@ def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
         attributes={
             "user.id": "1001",
             "process.name": "dd",
-            "lustre.access.class": "data",
+            "lustre.access.intent": "data_write",
             "lustre.access.op": "write",
             "lustre.actor.type": "user",
         },
@@ -175,7 +177,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     attributes={
                         "user.id": "1001",
                         "process.name": "dd",
-                        "lustre.access.class": "data",
+                        "lustre.access.intent": "data_write",
                         "lustre.access.op": "write",
                         "lustre.actor.type": "user",
                     },
@@ -188,7 +190,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     attributes={
                         "user.id": "1001",
                         "process.name": "dd",
-                        "lustre.access.class": "data",
+                        "lustre.access.intent": "data_write",
                         "lustre.access.op": "write",
                         "lustre.actor.type": "user",
                     },
@@ -201,7 +203,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     attributes={
                         "user.id": "1001",
                         "process.name": "dd",
-                        "lustre.access.class": "data",
+                        "lustre.access.intent": "data_write",
                         "lustre.access.op": "write",
                         "lustre.actor.type": "user",
                     },
@@ -248,14 +250,14 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
     finally:
         exporter.shutdown()
 
-    assert 'lustre_client_access_operations_total{access_class="data",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 2.0' in text
+    assert 'lustre_client_access_operations_total{access_intent="data_write",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 2.0' in text
     assert "lustre_client_access_duration_seconds_bucket" in text
-    assert 'access_class="data"' in text
+    assert 'access_intent="data_write"' in text
     assert 'mount="/mnt/lustre"' in text
     assert 'op="write"' in text
     assert "lustre_client_access_duration_seconds_sum" in text
     assert "0.00075" in text
-    assert 'lustre_client_data_bytes_total{access_class="data",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 1.572864e+06' in text
+    assert 'lustre_client_data_bytes_total{access_intent="data_write",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 1.572864e+06' in text
     assert 'lustre_client_rpc_wait_operations_total{actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="queue_wait",process="dd",uid="1001"} 3.0' in text
     assert "lustre_client_rpc_wait_duration_seconds_sum" in text
     assert 'lustre_client_inflight_requests{actor_type="user",fs="lustrefs",mount="/mnt/lustre",process="dd",uid="1001"} -1.0' in text

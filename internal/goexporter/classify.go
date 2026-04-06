@@ -4,20 +4,22 @@ import "strings"
 
 func ClassifyActorType(comm string) string {
 	if strings.HasPrefix(comm, "ptlrpcd_") {
-		return "worker"
+		return "client_worker"
+	}
+	for _, prefix := range BatchJobPrefixes {
+		if strings.HasPrefix(comm, prefix) {
+			return "batch_job"
+		}
 	}
 	if _, ok := DaemonNames[comm]; ok || strings.HasSuffix(comm, "exporter") {
-		return "daemon"
+		return "system_daemon"
 	}
 	return "user"
 }
 
-func AccessClassForOp(op string) string {
-	if _, ok := LLiteMetadataOps[op]; ok {
-		return "metadata"
-	}
-	if _, ok := LLiteDataOps[op]; ok {
-		return "data"
+func AccessIntentForOp(op string) string {
+	if intent, ok := IntentForOp[op]; ok {
+		return intent
 	}
 	return ""
 }

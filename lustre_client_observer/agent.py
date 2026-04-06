@@ -18,8 +18,17 @@ from typing import Any
 from wsgiref.simple_server import make_server
 
 
-LLITE_METADATA_OPS = {"lookup", "open", "rename", "unlink", "mkdir", "rmdir"}
-LLITE_DATA_OPS = {"read", "write", "fsync"}
+INTENT_FOR_OP = {
+    "lookup": "namespace_read",
+    "open": "namespace_read",
+    "rename": "namespace_mutation",
+    "unlink": "namespace_mutation",
+    "mkdir": "namespace_mutation",
+    "rmdir": "namespace_mutation",
+    "read": "data_read",
+    "write": "data_write",
+    "fsync": "sync",
+}
 REQUIRED_TRACEABLE_SYMBOLS = {
     "ll_lookup_nd",
     "ll_file_open",
@@ -41,6 +50,7 @@ DAEMON_NAMES = {
     "cron",
     "crond",
 }
+BATCH_JOB_PREFIXES = ("slurm", "pbs_", "sge_", "lsf_")
 
 
 @dataclass(frozen=True)
@@ -53,7 +63,7 @@ class EventRecord:
     duration_us: int
     size_bytes: int
     actor_type: str
-    access_class: str | None
+    access_intent: str | None
     request_ptr: str | None = None
 
 
@@ -89,18 +99,16 @@ PROMETHEUS_LATENCY_BUCKETS_SECONDS = (
 
 def classify_actor_type(comm: str) -> str:
     if comm.startswith("ptlrpcd_"):
-        return "worker"
+        return "client_worker"
+    if any(comm.startswith(p) for p in BATCH_JOB_PREFIXES):
+        return "batch_job"
     if comm in DAEMON_NAMES or comm.endswith("exporter"):
-        return "daemon"
+        return "system_daemon"
     return "user"
 
 
-def access_class_for_op(op: str) -> str | None:
-    if op in LLITE_METADATA_OPS:
-        return "metadata"
-    if op in LLITE_DATA_OPS:
-        return "data"
-    return None
+def access_intent_for_op(op: str) -> str | None:
+    return INTENT_FOR_OP.get(op)
 
 
 def parse_event_line(line: str) -> EventRecord:
@@ -127,7 +135,7 @@ def parse_event_line(line: str) -> EventRecord:
         duration_us=max(0, int(fields.get("duration_us", "0"))),
         size_bytes=max(0, int(fields.get("size_bytes", "0"))),
         actor_type=fields.get("actor_type", classify_actor_type(comm)),
-        access_class=fields.get("access_class", access_class_for_op(op)),
+        access_intent=fields.get("access_intent", access_intent_for_op(op)),
         request_ptr=fields.get("request_ptr"),
     )
 
@@ -209,17 +217,17 @@ class EventWindowAggregator:
         }
 
         if event.plane == "llite":
-            if event.access_class is None:
+            if event.access_intent is None:
                 return
             llite_attributes = {
                 **base_attributes,
-                "lustre.access.class": event.access_class,
+                "lustre.access.intent": event.access_intent,
                 "lustre.access.op": event.op,
             }
             self._add_counter("lustre.client.access.operations", 1, llite_attributes)
             if event.duration_us > 0:
                 self._add_histogram("lustre.client.access.duration", event.duration_us, llite_attributes)
-            if event.access_class == "data" and event.size_bytes > 0:
+            if event.access_intent in ("data_read", "data_write") and event.size_bytes > 0:
                 self._add_counter("lustre.client.data.bytes", event.size_bytes, llite_attributes)
             return
 
@@ -517,7 +525,7 @@ class PrometheusMetricExporter:
         self._server = None
         self._server_thread: threading.Thread | None = None
 
-        access_label_names = ("fs", "mount", "access_class", "op", "uid", "process", "actor_type")
+        access_label_names = ("fs", "mount", "access_intent", "op", "uid", "process", "actor_type")
         rpc_label_names = ("fs", "mount", "op", "uid", "process", "actor_type")
         inflight_label_names = ("fs", "mount", "uid", "process", "actor_type")
 
@@ -579,8 +587,8 @@ class PrometheusMetricExporter:
             "process": metric.attributes["process.name"],
             "actor_type": metric.attributes["lustre.actor.type"],
         }
-        if "lustre.access.class" in metric.attributes:
-            labels["access_class"] = metric.attributes["lustre.access.class"]
+        if "lustre.access.intent" in metric.attributes:
+            labels["access_intent"] = metric.attributes["lustre.access.intent"]
         if "lustre.access.op" in metric.attributes:
             labels["op"] = metric.attributes["lustre.access.op"]
         return labels
