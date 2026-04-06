@@ -23,29 +23,24 @@ func NewAggregator(resolver *UsernameResolver) *Aggregator {
 	}
 }
 
-// baseAttrs returns a new attribute map with the common keys. Caller may mutate.
-func baseAttrs(uid, username, comm, actorType string, event Event) map[string]string {
+func (a *Aggregator) baseAttrs(event Event) map[string]string {
 	return map[string]string{
-		AttrUserID:      uid,
-		AttrUserName:    username,
-		AttrProcessName: comm,
-		AttrActorType:   actorType,
+		AttrUserID:      strconv.FormatUint(uint64(event.UID), 10),
+		AttrUserName:    a.resolver.Resolve(event.UID),
+		AttrProcessName: event.Comm,
+		AttrActorType:   ClassifyActorType(event.Comm),
 		AttrMountPath:   event.MountPath,
 		AttrFSName:      event.FSName,
 	}
 }
 
 func (a *Aggregator) Consume(event Event) {
-	uid := strconv.FormatUint(uint64(event.UID), 10)
-	username := a.resolver.Resolve(event.UID)
-	actorType := ClassifyActorType(event.Comm)
-
 	if event.Plane == PlaneLLite {
 		intent := AccessIntentForOp(event.Op)
 		if intent == "" {
 			return
 		}
-		attrs := baseAttrs(uid, username, event.Comm, actorType, event)
+		attrs := a.baseAttrs(event)
 		attrs[AttrAccessIntent] = intent
 		attrs[AttrAccessOp] = event.Op
 		a.addCounter(MetricAccessOps, 1, attrs)
@@ -62,7 +57,7 @@ func (a *Aggregator) Consume(event Event) {
 		return
 	}
 	if event.Op == OpQueueWait {
-		attrs := baseAttrs(uid, username, event.Comm, actorType, event)
+		attrs := a.baseAttrs(event)
 		attrs[AttrAccessOp] = event.Op
 		a.addCounter(MetricRPCWaitOps, 1, attrs)
 		if event.DurationUS > 0 {
@@ -70,7 +65,7 @@ func (a *Aggregator) Consume(event Event) {
 		}
 		return
 	}
-	attrs := baseAttrs(uid, username, event.Comm, actorType, event)
+	attrs := a.baseAttrs(event)
 	switch event.Op {
 	case OpSendNewReq:
 		a.updateInflight(1, attrs)
@@ -145,10 +140,11 @@ func (a *Aggregator) updateInflight(delta float64, attrs map[string]string) {
 
 func (a *Aggregator) addHistogram(name string, value float64, attrs map[string]string) {
 	key := buildMetricKey(name, attrs)
-	if len(a.histograms[key]) >= MaxHistogramSamples {
+	s := a.histograms[key]
+	if len(s) >= MaxHistogramSamples {
 		return
 	}
-	a.histograms[key] = append(a.histograms[key], value)
+	a.histograms[key] = append(s, value)
 }
 
 func buildMetricKey(name string, attrs map[string]string) string {
