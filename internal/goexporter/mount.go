@@ -18,6 +18,34 @@ func ResolveMountInfo(mountPath string) (MountInfo, error) {
 	return ResolveMountInfoFromText(mountPath, string(data), filepath.EvalSymlinks, os.Stat)
 }
 
+// DetectLustreMounts scans /proc/mounts and returns the paths of all
+// currently mounted Lustre filesystems.
+func DetectLustreMounts() ([]string, error) {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return nil, err
+	}
+	return DetectLustreMountsFromText(string(data))
+}
+
+// DetectLustreMountsFromText parses mount table text and returns paths of
+// all Lustre mounts. Exported for testing.
+func DetectLustreMountsFromText(mountsText string) ([]string, error) {
+	var paths []string
+	scanner := bufio.NewScanner(strings.NewReader(mountsText))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 3 || fields[2] != "lustre" {
+			continue
+		}
+		paths = append(paths, fields[1])
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
+}
+
 func ResolveMountInfoFromText(
 	mountPath string,
 	mountsText string,

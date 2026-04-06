@@ -54,7 +54,16 @@ func main() {
 	}
 
 	if len(mounts) == 0 {
-		mounts = mountPathsFlag{"/mnt/lustre"}
+		detected, err := goexporter.DetectLustreMounts()
+		if err != nil {
+			log.Printf("Warning: failed to auto-detect Lustre mounts: %v; falling back to /mnt/lustre", err)
+			mounts = mountPathsFlag{"/mnt/lustre"}
+		} else if len(detected) == 0 {
+			log.Fatal("No Lustre mounts detected. Specify mount paths with -mount or ensure Lustre filesystems are mounted.")
+		} else {
+			mounts = detected
+			log.Printf("Auto-detected %d Lustre mount(s)", len(mounts))
+		}
 	}
 	cfg.MountPaths = mounts
 
