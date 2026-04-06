@@ -13,5 +13,18 @@ ExecStart=/usr/local/bin/lustre-ebpf-exporter \
 Restart=on-failure
 RestartSec=5s
 
+# Drop all capabilities except those required for eBPF kprobe operation.
+# CAP_BPF            - load BPF programs and create maps
+# CAP_PERFMON        - attach kprobes (Linux 5.8+; replaces CAP_SYS_ADMIN for perf)
+# CAP_SYS_ADMIN      - attach kprobes on kernels older than 5.8
+# CAP_SYS_RESOURCE   - call rlimit.RemoveMemlock()
+# CAP_DAC_READ_SEARCH - read tracefs mount point for kprobe attachment
+#
+# To determine the minimal set for your kernel, follow the bpfman guide:
+# https://bpfman.io/v0.5.6/developer-guide/linux-capabilities/#determine-required-capabilities
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_ADMIN CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH
+NoNewPrivileges=true
+
 [Install]
 WantedBy=multi-user.target

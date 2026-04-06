@@ -16,11 +16,9 @@ COPY internal ./internal
 
 RUN make generate-go-exporter GOOS=linux GOARCH=amd64
 RUN make build-go-exporter GOOS=linux GOARCH=amd64
-RUN make stage-go-exporter GOOS=linux GOARCH=amd64
 
 RUN mkdir -p /out \
- && cp dist/linux-amd64/lustre-ebpf-exporter /out/lustre-ebpf-exporter \
- && cp dist/linux-amd64/lustre_ebpf_exporter.bpf.o /out/lustre_ebpf_exporter.bpf.o
+ && cp dist/linux-amd64/lustre-ebpf-exporter /out/lustre-ebpf-exporter
 
 FROM scratch AS export
 

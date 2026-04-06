@@ -51,7 +51,6 @@ DEFAULT_ENV_DIR ?= /etc/default
 .PHONY: install
 install:
 	install -m 755 $(EXPORTER_BIN) $(INSTALL_BIN_DIR)/lustre-ebpf-exporter
-	install -m 644 $(BPF_OBJECT) $(INSTALL_BIN_DIR)/lustre_ebpf_exporter.bpf.o
 	install -m 644 build/systemd/lustre-ebpf-exporter.service $(SYSTEMD_UNIT_DIR)/lustre-ebpf-exporter.service
 	install -m 644 build/systemd/lustre-ebpf-exporter.default $(DEFAULT_ENV_DIR)/lustre-ebpf-exporter
 	systemctl daemon-reload

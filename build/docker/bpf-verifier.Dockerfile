@@ -14,10 +14,8 @@ COPY cmd ./cmd
 COPY internal ./internal
 
 RUN make generate-go-exporter GOOS=linux GOARCH=amd64
-RUN make stage-go-exporter GOOS=linux GOARCH=amd64
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bpf-verifier ./cmd/bpf-verifier
 
 FROM debian:bookworm-slim
-COPY --from=builder /src/dist/linux-amd64/lustre_ebpf_exporter.bpf.o /lustre_ebpf_exporter.bpf.o
 COPY --from=builder /bpf-verifier /bpf-verifier
-ENTRYPOINT ["/bpf-verifier", "-obj", "/lustre_ebpf_exporter.bpf.o"]
+ENTRYPOINT ["/bpf-verifier"]
