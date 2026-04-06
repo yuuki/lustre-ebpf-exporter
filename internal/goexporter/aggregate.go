@@ -1,7 +1,8 @@
 package goexporter
 
 import (
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -22,6 +23,18 @@ func NewAggregator(resolver *UsernameResolver) *Aggregator {
 	}
 }
 
+// baseAttrs returns a new attribute map with the common keys. Caller may mutate.
+func baseAttrs(uid, username, comm, actorType string, event Event) map[string]string {
+	return map[string]string{
+		AttrUserID:      uid,
+		AttrUserName:    username,
+		AttrProcessName: comm,
+		AttrActorType:   actorType,
+		AttrMountPath:   event.MountPath,
+		AttrFSName:      event.FSName,
+	}
+}
+
 func (a *Aggregator) Consume(event Event) {
 	uid := strconv.FormatUint(uint64(event.UID), 10)
 	username := a.resolver.Resolve(event.UID)
@@ -32,22 +45,15 @@ func (a *Aggregator) Consume(event Event) {
 		if intent == "" {
 			return
 		}
-		attrs := map[string]string{
-			"user.id":              uid,
-			"user.name":            username,
-			"process.name":         event.Comm,
-			"lustre.actor.type":    actorType,
-			"lustre.access.intent": intent,
-			"lustre.access.op":    event.Op,
-			"lustre.mount.path":   event.MountPath,
-			"lustre.fs.name":      event.FSName,
-		}
-		a.addCounter("lustre.client.access.operations", 1, attrs)
+		attrs := baseAttrs(uid, username, event.Comm, actorType, event)
+		attrs[AttrAccessIntent] = intent
+		attrs[AttrAccessOp] = event.Op
+		a.addCounter(MetricAccessOps, 1, attrs)
 		if event.DurationUS > 0 {
-			a.addHistogram("lustre.client.access.duration", float64(event.DurationUS), attrs)
+			a.addHistogram(MetricAccessDuration, float64(event.DurationUS), attrs)
 		}
 		if event.SizeBytes > 0 {
-			a.addCounter("lustre.client.data.bytes", float64(event.SizeBytes), attrs)
+			a.addCounter(MetricDataBytes, float64(event.SizeBytes), attrs)
 		}
 		return
 	}
@@ -56,29 +62,15 @@ func (a *Aggregator) Consume(event Event) {
 		return
 	}
 	if event.Op == OpQueueWait {
-		attrs := map[string]string{
-			"user.id":           uid,
-			"user.name":         username,
-			"process.name":      event.Comm,
-			"lustre.actor.type": actorType,
-			"lustre.access.op":  event.Op,
-			"lustre.mount.path": event.MountPath,
-			"lustre.fs.name":    event.FSName,
-		}
-		a.addCounter("lustre.client.rpc.wait.operations", 1, attrs)
+		attrs := baseAttrs(uid, username, event.Comm, actorType, event)
+		attrs[AttrAccessOp] = event.Op
+		a.addCounter(MetricRPCWaitOps, 1, attrs)
 		if event.DurationUS > 0 {
-			a.addHistogram("lustre.client.rpc.wait.duration", float64(event.DurationUS), attrs)
+			a.addHistogram(MetricRPCWaitDuration, float64(event.DurationUS), attrs)
 		}
 		return
 	}
-	attrs := map[string]string{
-		"user.id":           uid,
-		"user.name":         username,
-		"process.name":      event.Comm,
-		"lustre.actor.type": actorType,
-		"lustre.mount.path": event.MountPath,
-		"lustre.fs.name":    event.FSName,
-	}
+	attrs := baseAttrs(uid, username, event.Comm, actorType, event)
 	switch event.Op {
 	case OpSendNewReq:
 		a.updateInflight(1, attrs)
@@ -90,15 +82,10 @@ func (a *Aggregator) Consume(event Event) {
 func (a *Aggregator) Collect() []AggregatedMetric {
 	metrics := make([]AggregatedMetric, 0, len(a.counters)+len(a.histograms))
 
-	counterKeys := make([]string, 0, len(a.counters))
-	for key := range a.counters {
-		counterKeys = append(counterKeys, key)
-	}
-	sort.Strings(counterKeys)
-	for _, key := range counterKeys {
+	for _, key := range slices.Sorted(maps.Keys(a.counters)) {
 		name, attrs := splitMetricKey(key)
 		unit := "1"
-		if name == "lustre.client.data.bytes" {
+		if name == MetricDataBytes {
 			unit = "By"
 		}
 		metrics = append(metrics, AggregatedMetric{
@@ -110,28 +97,23 @@ func (a *Aggregator) Collect() []AggregatedMetric {
 		})
 	}
 
-	inflightKeys := make([]string, 0, len(a.inflight))
-	for key := range a.inflight {
-		inflightKeys = append(inflightKeys, key)
-	}
-	sort.Strings(inflightKeys)
-	for _, key := range inflightKeys {
+	for _, key := range slices.Sorted(maps.Keys(a.inflight)) {
 		_, attrs := splitMetricKey(key)
 		metrics = append(metrics, AggregatedMetric{
-			Name:       "lustre.client.inflight.requests",
+			Name:       MetricInflight,
 			Type:       "gauge",
 			Unit:       "1",
 			Value:      a.inflight[key],
 			Attributes: attrs,
 		})
 	}
-
-	histKeys := make([]string, 0, len(a.histograms))
-	for key := range a.histograms {
-		histKeys = append(histKeys, key)
+	for key, val := range a.inflight {
+		if val == 0 {
+			delete(a.inflight, key)
+		}
 	}
-	sort.Strings(histKeys)
-	for _, key := range histKeys {
+
+	for _, key := range slices.Sorted(maps.Keys(a.histograms)) {
 		name, attrs := splitMetricKey(key)
 		values := append([]float64(nil), a.histograms[key]...)
 		metrics = append(metrics, AggregatedMetric{
@@ -154,7 +136,7 @@ func (a *Aggregator) addCounter(name string, value float64, attrs map[string]str
 }
 
 func (a *Aggregator) updateInflight(delta float64, attrs map[string]string) {
-	key := buildMetricKey("lustre.client.inflight.requests", attrs)
+	key := buildMetricKey(MetricInflight, attrs)
 	a.inflight[key] += delta
 	if a.inflight[key] < 0 {
 		a.inflight[key] = 0
@@ -163,15 +145,14 @@ func (a *Aggregator) updateInflight(delta float64, attrs map[string]string) {
 
 func (a *Aggregator) addHistogram(name string, value float64, attrs map[string]string) {
 	key := buildMetricKey(name, attrs)
+	if len(a.histograms[key]) >= MaxHistogramSamples {
+		return
+	}
 	a.histograms[key] = append(a.histograms[key], value)
 }
 
 func buildMetricKey(name string, attrs map[string]string) string {
-	keys := make([]string, 0, len(attrs))
-	for key := range attrs {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(attrs))
 	var b strings.Builder
 	b.WriteString(name)
 	for _, key := range keys {
