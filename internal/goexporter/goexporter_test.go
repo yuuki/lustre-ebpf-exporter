@@ -192,6 +192,56 @@ func TestAggregatorInflightPersistsAcrossCollect(t *testing.T) {
 	}
 }
 
+func TestAggregatorInflightEvictsZeroOnCollect(t *testing.T) {
+	t.Parallel()
+
+	aggregator := NewAggregator(testResolver())
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+
+	// First Collect: should report inflight=0
+	metrics := aggregator.Collect()
+	found := false
+	for _, m := range metrics {
+		if m.Name == MetricInflight {
+			found = true
+			if m.Value != 0 {
+				t.Fatalf("expected inflight=0, got %f", m.Value)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing inflight metric in first collect")
+	}
+
+	// Second Collect: zero-valued entry should have been evicted
+	metrics = aggregator.Collect()
+	for _, m := range metrics {
+		if m.Name == MetricInflight {
+			t.Fatal("expected zero-valued inflight to be evicted, but it was still reported")
+		}
+	}
+}
+
+func TestAggregatorHistogramCapsAtMax(t *testing.T) {
+	t.Parallel()
+
+	aggregator := NewAggregator(testResolver())
+	for i := 0; i < MaxHistogramSamples+100; i++ {
+		aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: uint64(i + 1), SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	}
+	metrics := aggregator.Collect()
+	for _, m := range metrics {
+		if m.Name == MetricAccessDuration {
+			if len(m.Histogram) > MaxHistogramSamples {
+				t.Fatalf("histogram has %d samples, expected at most %d", len(m.Histogram), MaxHistogramSamples)
+			}
+			return
+		}
+	}
+	t.Fatal("missing access duration metric")
+}
+
 func TestSanitizeCommTrimsLeadingAndTrailingNulls(t *testing.T) {
 	t.Parallel()
 
