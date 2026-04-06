@@ -374,21 +374,21 @@ SEC("kprobe/ptlrpc_queue_wait")
 int ptlrpc_queue_wait_enter(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   __u64 req_ptr = PT_REGS_PARM1(ctx);
-  __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
-  __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
   struct start_info info = {};
   __u8 mount_idx = 0;
-  int selected_ok = selected != 0;
-  int tracked_ok = tracked != 0;
-  if (!selected_ok && !tracked_ok) {
-    return 0;
-  }
-  if (selected_ok) {
+
+  __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
+  if (selected) {
     mount_idx = *selected;
     bpf_map_delete_elem(&selected_mount_tids, &tid);
   } else {
+    __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
+    if (!tracked) {
+      return 0;
+    }
     mount_idx = *tracked;
   }
+
   fill_start_info(&info, req_ptr);
   info.mount_idx = mount_idx;
   bpf_map_update_elem(&rpc_wait_map, &tid, &info, BPF_ANY);
