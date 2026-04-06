@@ -57,6 +57,11 @@ func main() {
 	cfg.Window = time.Duration(windowSeconds) * time.Second
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
 
+	log.Printf("Starting lustre-ebpf-exporter")
+	log.Printf("BPF object: %s", cfg.BPFObjectPath)
+	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
+	log.Printf("Aggregation window: %s", cfg.Window)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

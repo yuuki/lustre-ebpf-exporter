@@ -3,6 +3,7 @@ package goexporter
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -71,6 +72,7 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string) (*Prometh
 	go func() {
 		_ = exporter.server.Serve(listener)
 	}()
+	log.Printf("Listening on %s, metrics at %s", listener.Addr(), telemetryPath)
 	return exporter, nil
 }
 
