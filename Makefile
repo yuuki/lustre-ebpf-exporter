@@ -42,3 +42,11 @@ docker-build-go-exporter:
 		--target export \
 		--output type=local,dest=$(DIST_DIR) \
 		.
+
+DOCKERFILE_BPF_VERIFIER ?= build/docker/bpf-verifier.Dockerfile
+BPF_VERIFIER_IMAGE ?= lustre-bpf-verifier
+
+.PHONY: verify-bpf
+verify-bpf:
+	docker build -f $(DOCKERFILE_BPF_VERIFIER) -t $(BPF_VERIFIER_IMAGE) .
+	docker run --rm --privileged $(BPF_VERIFIER_IMAGE)

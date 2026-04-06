@@ -26,6 +26,9 @@ go test ./internal/goexporter -run TestAggregatorCollectsExpectedMetrics
 # Python tests
 pytest tests/test_observer_agent.py -q
 
+# BPF verifier check via Docker (macOS OK, requires Docker --privileged)
+make verify-bpf
+
 # Lima E2E (requires full Lima Lustre environment)
 bash ./e2e/lima/scripts/verify-observer-go.sh    # Go exporter
 bash ./e2e/lima/scripts/verify-observer.sh        # legacy Python

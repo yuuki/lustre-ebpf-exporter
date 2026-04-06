@@ -37,6 +37,12 @@ func (a *Aggregator) Consume(event Event) {
 			"lustre.fs.name":      event.FSName,
 		}
 		a.addCounter("lustre.client.access.operations", 1, attrs)
+		if event.DurationUS > 0 {
+			a.addHistogram("lustre.client.access.duration", float64(event.DurationUS), attrs)
+		}
+		if event.SizeBytes > 0 {
+			a.addCounter("lustre.client.data.bytes", float64(event.SizeBytes), attrs)
+		}
 		return
 	}
 
