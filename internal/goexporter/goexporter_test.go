@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestClassifyActorType(t *testing.T) {
@@ -100,24 +101,17 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	metrics := aggregator.Collect()
 	text := renderMetricsForTest(t, metrics)
 
-	if !strings.Contains(text, MetricAccessOps) {
-		t.Fatalf("missing access operations metric: %s", text)
-	}
+	// Counters (MetricAccessOps, MetricDataBytes, MetricRPCWaitOps) are now
+	// authoritative from BPF PERCPU_HASH maps, not from Aggregator.
 	if !strings.Contains(text, MetricAccessDuration) {
 		t.Fatalf("missing access duration metric: %s", text)
-	}
-	if !strings.Contains(text, MetricDataBytes) {
-		t.Fatalf("missing data bytes metric: %s", text)
-	}
-	if !strings.Contains(text, MetricRPCWaitOps) {
-		t.Fatalf("missing rpc wait metric: %s", text)
 	}
 	if !strings.Contains(text, MetricInflight) {
 		t.Fatalf("missing inflight metric: %s", text)
 	}
 }
 
-func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
+func TestAggregatorSkipsZeroValuedDuration(t *testing.T) {
 	t.Parallel()
 
 	aggregator := NewAggregator(testResolver())
@@ -129,14 +123,9 @@ func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 		names[metric.Name] = true
 	}
 
-	if !names[MetricAccessOps] {
-		t.Fatalf("missing access operations metric: %#v", metrics)
-	}
+	// Counters are now in BPF maps; Aggregator only handles histograms.
 	if names[MetricAccessDuration] {
 		t.Fatalf("unexpected zero-valued duration metric: %#v", metrics)
-	}
-	if names[MetricDataBytes] {
-		t.Fatalf("unexpected zero-valued data bytes metric: %#v", metrics)
 	}
 }
 
@@ -363,4 +352,65 @@ func renderMetricsForTest(t *testing.T, metrics []AggregatedMetric) string {
 		b.WriteString(metric.Name)
 	}
 	return b.String()
+}
+
+func TestActorTypeName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  uint8
+		want string
+	}{
+		{rawActorUser, "user"},
+		{rawActorClientWorker, "client_worker"},
+		{rawActorBatchJob, "batch_job"},
+		{rawActorSystemDaemon, "system_daemon"},
+		{99, "user"},
+	}
+	for _, tc := range cases {
+		if got := actorTypeName(tc.raw); got != tc.want {
+			t.Errorf("actorTypeName(%d) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestIntentName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  uint8
+		want string
+	}{
+		{rawIntentNamespaceRead, "namespace_read"},
+		{rawIntentNamespaceMutation, "namespace_mutation"},
+		{rawIntentDataRead, "data_read"},
+		{rawIntentDataWrite, "data_write"},
+		{rawIntentSync, "sync"},
+		{rawIntentUnknown, ""},
+	}
+	for _, tc := range cases {
+		if got := intentName(tc.raw); got != tc.want {
+			t.Errorf("intentName(%d) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestBpfAggKeySize(t *testing.T) {
+	t.Parallel()
+
+	var key bpfAggKey
+	size := int(unsafe.Sizeof(key))
+	if size != 24 {
+		t.Fatalf("bpfAggKey size = %d, want 24 (must match BPF struct)", size)
+	}
+}
+
+func TestBpfCounterValSize(t *testing.T) {
+	t.Parallel()
+
+	var val bpfCounterVal
+	size := int(unsafe.Sizeof(val))
+	if size != 16 {
+		t.Fatalf("bpfCounterVal size = %d, want 16 (must match BPF struct)", size)
+	}
 }

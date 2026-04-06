@@ -62,6 +62,68 @@ const (
 
 const MaxHistogramSamples = 10_000
 
+// BPF agg_key struct に対応。バイトレイアウトは BPF C struct と一致。
+type bpfAggKey struct {
+	UID       uint32
+	Op        uint8
+	MountIdx  uint8
+	ActorType uint8
+	Intent    uint8
+	Comm      [16]byte
+}
+
+// BPF counter_val struct に対応。
+type bpfCounterVal struct {
+	OpsCount uint64
+	BytesSum uint64
+}
+
+const (
+	rawActorUser         uint8 = 0
+	rawActorClientWorker uint8 = 1
+	rawActorBatchJob     uint8 = 2
+	rawActorSystemDaemon uint8 = 3
+
+	rawIntentNamespaceRead     uint8 = 0
+	rawIntentNamespaceMutation uint8 = 1
+	rawIntentDataRead          uint8 = 2
+	rawIntentDataWrite         uint8 = 3
+	rawIntentSync              uint8 = 4
+	rawIntentUnknown           uint8 = 0xFF
+)
+
+func actorTypeName(raw uint8) string {
+	switch raw {
+	case rawActorUser:
+		return "user"
+	case rawActorClientWorker:
+		return "client_worker"
+	case rawActorBatchJob:
+		return "batch_job"
+	case rawActorSystemDaemon:
+		return "system_daemon"
+	default:
+		return "user"
+	}
+}
+
+func intentName(raw uint8) string {
+	switch raw {
+	case rawIntentNamespaceRead:
+		return "namespace_read"
+	case rawIntentNamespaceMutation:
+		return "namespace_mutation"
+	case rawIntentDataRead:
+		return "data_read"
+	case rawIntentDataWrite:
+		return "data_write"
+	case rawIntentSync:
+		return "sync"
+	default:
+		return ""
+	}
+}
+
 var (
 	IntentForOp = map[string]string{
 		OpLookup: "namespace_read", OpOpen: "namespace_read",

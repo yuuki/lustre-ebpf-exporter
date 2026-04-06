@@ -8,7 +8,6 @@ import (
 )
 
 type Aggregator struct {
-	counters   map[string]float64
 	histograms map[string][]float64
 	inflight   map[string]float64 // persistent gauge, not reset on Collect
 	resolver   *UsernameResolver
@@ -16,7 +15,6 @@ type Aggregator struct {
 
 func NewAggregator(resolver *UsernameResolver) *Aggregator {
 	return &Aggregator{
-		counters:   map[string]float64{},
 		histograms: map[string][]float64{},
 		inflight:   map[string]float64{},
 		resolver:   resolver,
@@ -40,15 +38,13 @@ func (a *Aggregator) Consume(event Event) {
 		if intent == "" {
 			return
 		}
-		attrs := a.baseAttrs(event)
-		attrs[AttrAccessIntent] = intent
-		attrs[AttrAccessOp] = event.Op
-		a.addCounter(MetricAccessOps, 1, attrs)
+		// Counters (ops_count, bytes_sum) are now authoritative from BPF maps.
+		// Only collect histogram samples from perf events.
 		if event.DurationUS > 0 {
+			attrs := a.baseAttrs(event)
+			attrs[AttrAccessIntent] = intent
+			attrs[AttrAccessOp] = event.Op
 			a.addHistogram(MetricAccessDuration, float64(event.DurationUS), attrs)
-		}
-		if event.SizeBytes > 0 {
-			a.addCounter(MetricDataBytes, float64(event.SizeBytes), attrs)
 		}
 		return
 	}
@@ -57,10 +53,10 @@ func (a *Aggregator) Consume(event Event) {
 		return
 	}
 	if event.Op == OpQueueWait {
-		attrs := a.baseAttrs(event)
-		attrs[AttrAccessOp] = event.Op
-		a.addCounter(MetricRPCWaitOps, 1, attrs)
+		// Counter is now authoritative from BPF maps. Only histograms here.
 		if event.DurationUS > 0 {
+			attrs := a.baseAttrs(event)
+			attrs[AttrAccessOp] = event.Op
 			a.addHistogram(MetricRPCWaitDuration, float64(event.DurationUS), attrs)
 		}
 		return
@@ -75,22 +71,7 @@ func (a *Aggregator) Consume(event Event) {
 }
 
 func (a *Aggregator) Collect() []AggregatedMetric {
-	metrics := make([]AggregatedMetric, 0, len(a.counters)+len(a.histograms))
-
-	for _, key := range slices.Sorted(maps.Keys(a.counters)) {
-		name, attrs := splitMetricKey(key)
-		unit := "1"
-		if name == MetricDataBytes {
-			unit = "By"
-		}
-		metrics = append(metrics, AggregatedMetric{
-			Name:       name,
-			Type:       "counter",
-			Unit:       unit,
-			Value:      a.counters[key],
-			Attributes: attrs,
-		})
-	}
+	metrics := make([]AggregatedMetric, 0, len(a.histograms)+len(a.inflight))
 
 	for _, key := range slices.Sorted(maps.Keys(a.inflight)) {
 		_, attrs := splitMetricKey(key)
@@ -120,14 +101,8 @@ func (a *Aggregator) Collect() []AggregatedMetric {
 		})
 	}
 
-	a.counters = map[string]float64{}
 	a.histograms = map[string][]float64{}
 	return metrics
-}
-
-func (a *Aggregator) addCounter(name string, value float64, attrs map[string]string) {
-	key := buildMetricKey(name, attrs)
-	a.counters[key] += value
 }
 
 func (a *Aggregator) updateInflight(delta float64, attrs map[string]string) {

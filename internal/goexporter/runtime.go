@@ -6,10 +6,13 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/cilium/ebpf"
 )
 
 type EventSource interface {
 	Events() <-chan Event
+	CounterMaps() (llite, rpc *ebpf.Map)
 	Close() error
 }
 
@@ -38,15 +41,23 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer source.Close()
 
-	aggregator := NewAggregator(NewUsernameResolver())
+	resolver := NewUsernameResolver()
+	aggregator := NewAggregator(resolver)
+
+	lliteMap, rpcMap := source.CounterMaps()
+	counterReader := NewCounterReader(lliteMap, rpcMap, mountInfos, resolver)
+
 	ticker := time.NewTicker(cfg.Window)
 	defer ticker.Stop()
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
 	flush := func(reason string) {
-		metrics := aggregator.Collect()
+		counterMetrics := counterReader.Read()
+		histMetrics := aggregator.Collect()
+		metrics := append(counterMetrics, histMetrics...)
 		if debugEnabled {
-			log.Printf("debug: flushing %d metrics on %s", len(metrics), reason)
+			log.Printf("debug: flushing %d metrics (%d counters, %d hist/inflight) on %s",
+				len(metrics), len(counterMetrics), len(histMetrics), reason)
 		}
 		exporter.Export(metrics)
 	}

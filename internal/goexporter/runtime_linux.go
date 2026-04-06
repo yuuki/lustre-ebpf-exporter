@@ -205,6 +205,10 @@ func (s *linuxEventSource) Events() <-chan Event {
 	return s.events
 }
 
+func (s *linuxEventSource) CounterMaps() (llite, rpc *ebpf.Map) {
+	return s.collection.Maps["llite_counters"], s.collection.Maps["rpc_counters"]
+}
+
 func (s *linuxEventSource) Close() error {
 	var closeErr error
 	s.once.Do(func() {
