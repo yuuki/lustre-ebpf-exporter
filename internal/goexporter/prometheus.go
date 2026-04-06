@@ -60,24 +60,10 @@ func NewPrometheusExporter(info MountInfo, listenAddress string, telemetryPath s
 			[]string{"fs", "mount", "uid", "process", "actor_type"},
 		),
 	}
-	if err := registry.Register(exporter.accessOps); err != nil {
-		return nil, err
-	}
-	if err := registry.Register(exporter.accessLatency); err != nil {
-		return nil, err
-	}
-	if err := registry.Register(exporter.dataBytes); err != nil {
-		return nil, err
-	}
-	if err := registry.Register(exporter.rpcWaitOps); err != nil {
-		return nil, err
-	}
-	if err := registry.Register(exporter.rpcWaitLat); err != nil {
-		return nil, err
-	}
-	if err := registry.Register(exporter.inflight); err != nil {
-		return nil, err
-	}
+	registry.MustRegister(
+		exporter.accessOps, exporter.accessLatency, exporter.dataBytes,
+		exporter.rpcWaitOps, exporter.rpcWaitLat, exporter.inflight,
+	)
 
 	mux := http.NewServeMux()
 	mux.Handle(telemetryPath, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
