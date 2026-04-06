@@ -2,6 +2,7 @@ package goexporter
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -13,6 +14,9 @@ type EventSource interface {
 }
 
 func Run(ctx context.Context, cfg Config) error {
+	if len(cfg.MountPaths) > MaxMountPoints {
+		return fmt.Errorf("too many mount paths (%d); maximum is %d", len(cfg.MountPaths), MaxMountPoints)
+	}
 	var mountInfos []MountInfo
 	for _, mp := range cfg.MountPaths {
 		mi, err := ResolveMountInfo(mp)
@@ -76,6 +80,8 @@ func Run(ctx context.Context, cfg Config) error {
 				mi := mountInfos[event.MountIdx]
 				event.MountPath = mi.Path
 				event.FSName = mi.FSName
+			} else {
+				log.Printf("warning: event has unknown mount index %d", event.MountIdx)
 			}
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)

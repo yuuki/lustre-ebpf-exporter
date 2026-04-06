@@ -38,11 +38,6 @@ struct kiocb {
 };
 #pragma clang attribute pop
 
-struct observer_config {
-  __u32 target_major;
-  __u32 target_minor;
-};
-
 struct mount_key {
   __u32 major;
   __u32 minor;

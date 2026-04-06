@@ -127,6 +127,7 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 	sample[1] = 4
 	binary.LittleEndian.PutUint32(sample[8:12], 1001)
 	binary.LittleEndian.PutUint32(sample[12:16], 4321)
+	binary.LittleEndian.PutUint32(sample[16:20], 2)
 	binary.LittleEndian.PutUint64(sample[24:32], 250)
 	binary.LittleEndian.PutUint64(sample[32:40], 4096)
 	binary.LittleEndian.PutUint64(sample[40:48], 12345)
@@ -150,6 +151,9 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 	}
 	if event.SizeBytes != 4096 {
 		t.Fatalf("expected size 4096, got %d", event.SizeBytes)
+	}
+	if event.MountIdx != 2 {
+		t.Fatalf("expected mount index 2, got %d", event.MountIdx)
 	}
 	if event.RequestPtr != 12345 {
 		t.Fatalf("expected request 12345, got %d", event.RequestPtr)
