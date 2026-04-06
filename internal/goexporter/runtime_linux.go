@@ -42,9 +42,6 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 	if cfg.BPFObjectPath == "" {
 		return nil, fmt.Errorf("--bpf-object is required")
 	}
-	if _, err := os.Stat(cfg.BPFObjectPath); err != nil {
-		return nil, err
-	}
 
 	required := []probeSpec{
 		{symbol: "ll_lookup_nd", program: "ll_lookup_nd_enter"},
@@ -103,7 +100,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		debugHex:   os.Getenv("LUSTRE_OBSERVER_DEBUG_HEX") == "1",
 	}
 
-	if err := source.attachAll(required, false); err != nil {
+	if err := source.attachAll(required, cfg.LegacySymbolAllowMissing); err != nil {
 		source.Close()
 		return nil, err
 	}
@@ -184,7 +181,7 @@ func (s *linuxEventSource) readLoop(ctx context.Context) {
 			s.loggedHex = true
 			slog.Info("debug raw sample", "len", len(record.RawSample), "hex", fmt.Sprintf("%x", record.RawSample))
 		}
-		event, err := decodeRawEvent(record.RawSample)
+		event, err := parseObserverEvent(record.RawSample)
 		if err != nil {
 			log.Printf("warning: decode raw event: %v", err)
 			continue
@@ -218,10 +215,6 @@ func (s *linuxEventSource) Close() error {
 		}
 	})
 	return closeErr
-}
-
-func decodeRawEvent(sample []byte) (Event, error) {
-	return parseObserverEvent(sample)
 }
 
 func isMissingSymbolError(err error) bool {
