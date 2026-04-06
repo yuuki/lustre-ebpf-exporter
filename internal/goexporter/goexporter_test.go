@@ -79,6 +79,12 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	if !strings.Contains(text, "lustre.client.access.operations") {
 		t.Fatalf("missing access operations metric: %s", text)
 	}
+	if !strings.Contains(text, "lustre.client.access.duration") {
+		t.Fatalf("missing access duration metric: %s", text)
+	}
+	if !strings.Contains(text, "lustre.client.data.bytes") {
+		t.Fatalf("missing data bytes metric: %s", text)
+	}
 	if !strings.Contains(text, "lustre.client.rpc.wait.operations") {
 		t.Fatalf("missing rpc wait metric: %s", text)
 	}
