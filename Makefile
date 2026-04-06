@@ -2,6 +2,9 @@ GO ?= go
 GOFLAGS ?=
 GOOS ?= linux
 GOARCH ?= amd64
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS ?= -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 BPF_CLANG ?= clang
 BPF2GO ?= $(GO) run github.com/cilium/ebpf/cmd/bpf2go
 ifeq ($(GOARCH),amd64)
@@ -21,7 +24,7 @@ generate-go-exporter:
 
 .PHONY: build-go-exporter
 build-go-exporter:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-ebpf-exporter
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -ldflags '$(LDFLAGS)' $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-ebpf-exporter
 
 .PHONY: test-go
 test-go:
@@ -32,6 +35,8 @@ docker-build-go-exporter:
 	mkdir -p $(DIST_DIR)
 	docker build \
 		-f $(DOCKERFILE_GO_EXPORTER) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
 		--target export \
 		--output type=local,dest=$(DIST_DIR) \
 		.

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,6 +12,11 @@ import (
 	"time"
 
 	"github.com/yuuki/otel-lustre-tracer/internal/goexporter"
+)
+
+var (
+	version = "dev"
+	commit  = "unknown"
 )
 
 type mountPathsFlag []string
@@ -39,7 +45,13 @@ func main() {
 	)
 	flag.StringVar(&cfg.WebListenAddress, "web.listen-address", ":9108", "Address to listen on for web interface and telemetry")
 	flag.StringVar(&cfg.WebTelemetryPath, "web.telemetry-path", "/metrics", "Path under which to expose metrics")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("lustre-ebpf-exporter %s (commit: %s)\n", version, commit)
+		os.Exit(0)
+	}
 
 	if len(mounts) == 0 {
 		mounts = mountPathsFlag{"/mnt/lustre"}

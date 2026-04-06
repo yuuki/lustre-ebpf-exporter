@@ -1,5 +1,8 @@
 FROM golang:1.26.1-bookworm AS builder
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+
 ENV PATH=/usr/local/go/bin:/go/bin:${PATH}
 ENV BPF_CFLAGS="-I. -I/usr/include/x86_64-linux-gnu -D__TARGET_ARCH_x86"
 
@@ -15,7 +18,8 @@ COPY cmd ./cmd
 COPY internal ./internal
 
 RUN make generate-go-exporter GOOS=linux GOARCH=amd64
-RUN make build-go-exporter GOOS=linux GOARCH=amd64
+RUN make build-go-exporter GOOS=linux GOARCH=amd64 \
+    LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT}"
 
 RUN mkdir -p /out \
  && cp dist/linux-amd64/lustre-ebpf-exporter /out/lustre-ebpf-exporter

@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build binary
+        run: |
+          make docker-build-go-exporter \
+            VERSION="${GITHUB_REF_NAME}" \
+            COMMIT="${GITHUB_SHA::7}"
+
+      - name: Package release assets
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE_DIR="lustre-ebpf-exporter-${VERSION}-linux-amd64"
+
+          mkdir -p "${ARCHIVE_DIR}"
+          cp dist/linux-amd64/lustre-ebpf-exporter "${ARCHIVE_DIR}/"
+          cp build/systemd/lustre-ebpf-exporter.service "${ARCHIVE_DIR}/"
+          cp build/systemd/lustre-ebpf-exporter.default "${ARCHIVE_DIR}/"
+          cp LICENSE "${ARCHIVE_DIR}/"
+
+          tar czf "${ARCHIVE_DIR}.tar.gz" "${ARCHIVE_DIR}"
+          sha256sum "${ARCHIVE_DIR}.tar.gz" > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            lustre-ebpf-exporter-*.tar.gz
+            checksums.txt
