@@ -67,11 +67,11 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	t.Parallel()
 
 	aggregator := NewAggregator()
-	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024})
-	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 500, SizeBytes: 2048})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd", DurationUS: 75})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd"})
+	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd", DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
 
 	metrics := aggregator.Collect()
 	text := renderMetricsForTest(t, metrics)
@@ -91,7 +91,7 @@ func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 	t.Parallel()
 
 	aggregator := NewAggregator()
-	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0})
+	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"})
 
 	metrics := aggregator.Collect()
 	names := map[string]bool{}
@@ -160,7 +160,6 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
 	exporter, err := NewPrometheusExporter(
-		MountInfo{FSName: "lustrefs", Path: "/mnt/lustre"},
 		"127.0.0.1:0",
 		"/metrics",
 	)
@@ -177,6 +176,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			Attributes: map[string]string{
 				"user.id": "1001", "process.name": "dd", "lustre.actor.type": "user",
 				"lustre.access.class": "data", "lustre.access.op": "write",
+				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
 			},
 		},
 		{
@@ -186,6 +186,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			Attributes: map[string]string{
 				"user.id": "1001", "process.name": "dd", "lustre.actor.type": "user",
 				"lustre.access.class": "data", "lustre.access.op": "write",
+				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
 			},
 		},
 	})

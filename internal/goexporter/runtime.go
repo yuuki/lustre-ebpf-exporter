@@ -13,18 +13,22 @@ type EventSource interface {
 }
 
 func Run(ctx context.Context, cfg Config) error {
-	mountInfo, err := ResolveMountInfo(cfg.MountPath)
-	if err != nil {
-		return err
+	var mountInfos []MountInfo
+	for _, mp := range cfg.MountPaths {
+		mi, err := ResolveMountInfo(mp)
+		if err != nil {
+			return err
+		}
+		mountInfos = append(mountInfos, mi)
 	}
 
-	exporter, err := NewPrometheusExporter(mountInfo, cfg.WebListenAddress, cfg.WebTelemetryPath)
+	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath)
 	if err != nil {
 		return err
 	}
 	defer exporter.Shutdown(context.Background())
 
-	source, err := newEventSource(ctx, cfg, mountInfo)
+	source, err := newEventSource(ctx, cfg, mountInfos)
 	if err != nil {
 		return err
 	}
@@ -68,8 +72,13 @@ func Run(ctx context.Context, cfg Config) error {
 				flush("source close")
 				return nil
 			}
+			if int(event.MountIdx) < len(mountInfos) {
+				mi := mountInfos[event.MountIdx]
+				event.MountPath = mi.Path
+				event.FSName = mi.FSName
+			}
 			if debugEnabled {
-				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
+				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
 			aggregator.Consume(event)
 		}

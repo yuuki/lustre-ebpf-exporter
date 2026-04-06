@@ -14,10 +14,9 @@ import (
 )
 
 type PrometheusExporter struct {
-	registry     *prometheus.Registry
-	staticLabels prometheus.Labels
-	server       *http.Server
-	listener     net.Listener
+	registry *prometheus.Registry
+	server   *http.Server
+	listener net.Listener
 
 	accessOps     *prometheus.CounterVec
 	accessLatency *prometheus.HistogramVec
@@ -27,14 +26,10 @@ type PrometheusExporter struct {
 	inflight      *prometheus.GaugeVec
 }
 
-func NewPrometheusExporter(info MountInfo, listenAddress string, telemetryPath string) (*PrometheusExporter, error) {
+func NewPrometheusExporter(listenAddress string, telemetryPath string) (*PrometheusExporter, error) {
 	registry := prometheus.NewRegistry()
 	exporter := &PrometheusExporter{
 		registry: registry,
-		staticLabels: prometheus.Labels{
-			"fs":    info.FSName,
-			"mount": info.Path,
-		},
 		accessOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_access_operations_total", Help: "Aggregated llite access operation count"},
 			[]string{"fs", "mount", "access_class", "op", "uid", "process", "actor_type"},
@@ -121,8 +116,8 @@ func (e *PrometheusExporter) RenderText() (string, error) {
 
 func (e *PrometheusExporter) labels(metric AggregatedMetric) prometheus.Labels {
 	labels := prometheus.Labels{
-		"fs":         e.staticLabels["fs"],
-		"mount":      e.staticLabels["mount"],
+		"fs":         metric.Attributes["lustre.fs.name"],
+		"mount":      metric.Attributes["lustre.mount.path"],
 		"uid":        metric.Attributes["user.id"],
 		"process":    metric.Attributes["process.name"],
 		"actor_type": metric.Attributes["lustre.actor.type"],

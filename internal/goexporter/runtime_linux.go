@@ -18,9 +18,9 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-type bpfConfig struct {
-	TargetMajor uint32
-	TargetMinor uint32
+type bpfMountKey struct {
+	Major uint32
+	Minor uint32
 }
 
 type linuxEventSource struct {
@@ -35,7 +35,7 @@ type linuxEventSource struct {
 	loggedHex  bool
 }
 
-func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (EventSource, error) {
+func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (EventSource, error) {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return nil, err
 	}
@@ -79,11 +79,13 @@ func newEventSource(ctx context.Context, cfg Config, mountInfo MountInfo) (Event
 		collection.Close()
 		return nil, fmt.Errorf("config_map not found in %s", cfg.BPFObjectPath)
 	}
-	key := uint32(0)
-	value := bpfConfig{TargetMajor: mountInfo.Major, TargetMinor: mountInfo.Minor}
-	if err := configMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
-		collection.Close()
-		return nil, err
+	for i, mi := range mountInfos {
+		key := bpfMountKey{Major: mi.Major, Minor: mi.Minor}
+		value := uint8(i)
+		if err := configMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+			collection.Close()
+			return nil, err
+		}
 	}
 
 	reader, err := perf.NewReader(collection.Maps["events"], os.Getpagesize()*8)

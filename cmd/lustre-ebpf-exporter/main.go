@@ -7,18 +7,28 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/yuuki/otel-lustre-tracer/internal/goexporter"
 )
 
+type mountPathsFlag []string
+
+func (m *mountPathsFlag) String() string { return strings.Join(*m, ",") }
+func (m *mountPathsFlag) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
 func main() {
 	cfg := goexporter.Config{}
 	var windowSeconds int
 	var durationSeconds int
+	var mounts mountPathsFlag
 
-	flag.StringVar(&cfg.MountPath, "mount", "/mnt/lustre", "Lustre client mount path")
+	flag.Var(&mounts, "mount", "Lustre client mount path (can be specified multiple times)")
 	flag.IntVar(&windowSeconds, "window-seconds", 10, "Aggregation window size in seconds")
 	flag.IntVar(&durationSeconds, "duration", 0, "Stop after the given duration in seconds; 0 means run until interrupted")
 	flag.BoolVar(&cfg.Once, "once", false, "Flush one aggregation window and exit")
@@ -32,6 +42,11 @@ func main() {
 	flag.StringVar(&cfg.WebListenAddress, "web.listen-address", ":9108", "Address to listen on for web interface and telemetry")
 	flag.StringVar(&cfg.WebTelemetryPath, "web.telemetry-path", "/metrics", "Path under which to expose metrics")
 	flag.Parse()
+
+	if len(mounts) == 0 {
+		mounts = mountPathsFlag{"/mnt/lustre"}
+	}
+	cfg.MountPaths = mounts
 
 	if windowSeconds <= 0 {
 		log.Fatal("--window-seconds must be greater than zero")

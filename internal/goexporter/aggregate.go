@@ -33,6 +33,8 @@ func (a *Aggregator) Consume(event Event) {
 			"lustre.actor.type":   actorType,
 			"lustre.access.class": accessClass,
 			"lustre.access.op":    event.Op,
+			"lustre.mount.path":   event.MountPath,
+			"lustre.fs.name":      event.FSName,
 		}
 		a.addCounter("lustre.client.access.operations", 1, attrs)
 		return
@@ -47,6 +49,8 @@ func (a *Aggregator) Consume(event Event) {
 			"process.name":      event.Comm,
 			"lustre.actor.type": actorType,
 			"lustre.access.op":  event.Op,
+			"lustre.mount.path": event.MountPath,
+			"lustre.fs.name":    event.FSName,
 		}
 		a.addCounter("lustre.client.rpc.wait.operations", 1, attrs)
 		if event.DurationUS > 0 {
@@ -58,6 +62,8 @@ func (a *Aggregator) Consume(event Event) {
 		"user.id":           uid,
 		"process.name":      event.Comm,
 		"lustre.actor.type": actorType,
+		"lustre.mount.path": event.MountPath,
+		"lustre.fs.name":    event.FSName,
 	}
 	switch event.Op {
 	case OpSendNewReq:

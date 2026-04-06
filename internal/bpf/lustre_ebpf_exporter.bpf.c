@@ -43,12 +43,18 @@ struct observer_config {
   __u32 target_minor;
 };
 
+struct mount_key {
+  __u32 major;
+  __u32 minor;
+};
+
 struct start_info {
   __u64 start_ns;
   __u32 uid;
   __u32 pid;
   char comm[TASK_COMM_LEN];
   __u64 request_ptr;
+  __u8 mount_idx;
 };
 
 struct observer_event {
@@ -57,7 +63,7 @@ struct observer_event {
   __u8 pad[6];
   __u32 uid;
   __u32 pid;
-  __u32 pad2;
+  __u32 mount_idx;
   __u64 duration_us;
   __u64 size_bytes;
   __u64 request_ptr;
@@ -65,10 +71,10 @@ struct observer_event {
 };
 
 struct {
-  __uint(type, BPF_MAP_TYPE_ARRAY);
-  __uint(max_entries, 1);
-  __type(key, __u32);
-  __type(value, struct observer_config);
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(max_entries, 16);
+  __type(key, struct mount_key);
+  __type(value, __u8);
 } config_map SEC(".maps");
 
 struct {
@@ -106,13 +112,16 @@ static __always_inline void fill_start_info(struct start_info *info, __u64 reque
   bpf_get_current_comm(&info->comm, sizeof(info->comm));
 }
 
-static __always_inline int mount_matches(__u32 s_dev) {
-  __u32 zero = 0;
-  struct observer_config *cfg = bpf_map_lookup_elem(&config_map, &zero);
-  if (!cfg) {
+static __always_inline int lookup_mount(__u32 s_dev, __u8 *mount_idx) {
+  struct mount_key key = {};
+  key.major = s_dev >> 20;
+  key.minor = s_dev & 1048575;
+  __u8 *val = bpf_map_lookup_elem(&config_map, &key);
+  if (!val) {
     return 0;
   }
-  return ((s_dev >> 20) == cfg->target_major) && ((s_dev & 1048575) == cfg->target_minor);
+  *mount_idx = *val;
+  return 1;
 }
 
 static __always_inline int read_inode_dev(struct inode *inode, __u32 *s_dev) {
@@ -149,6 +158,7 @@ static __always_inline int emit_from_start(void *ctx, struct start_info *info, _
   event.op = op;
   event.uid = info->uid;
   event.pid = info->pid;
+  event.mount_idx = (__u32)info->mount_idx;
   event.duration_us = duration_us;
   event.size_bytes = size_bytes;
   event.request_ptr = request_ptr;
@@ -179,13 +189,14 @@ int ll_lookup_nd_enter(struct pt_regs *ctx) {
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
-  __u8 selected = 1;
-  if (!read_inode_dev(inode, &s_dev) || !mount_matches(s_dev)) {
+  __u8 mount_idx = 0;
+  if (!read_inode_dev(inode, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
     return 0;
   }
   fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
   bpf_map_update_elem(&ll_lookup_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
   return 0;
 }
 
@@ -195,13 +206,14 @@ int ll_file_open_enter(struct pt_regs *ctx) {
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
-  __u8 selected = 1;
-  if (!read_inode_dev(inode, &s_dev) || !mount_matches(s_dev)) {
+  __u8 mount_idx = 0;
+  if (!read_inode_dev(inode, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
     return 0;
   }
   fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
   bpf_map_update_elem(&ll_open_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
   return 0;
 }
 
@@ -211,13 +223,14 @@ int ll_file_read_iter_enter(struct pt_regs *ctx) {
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
-  __u8 selected = 1;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !mount_matches(s_dev)) {
+  __u8 mount_idx = 0;
+  if (!read_kiocb_dev(kiocb, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
     return 0;
   }
   fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
   bpf_map_update_elem(&ll_read_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
   return 0;
 }
 
@@ -227,13 +240,14 @@ int ll_file_write_iter_enter(struct pt_regs *ctx) {
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
-  __u8 selected = 1;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !mount_matches(s_dev)) {
+  __u8 mount_idx = 0;
+  if (!read_kiocb_dev(kiocb, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
     return 0;
   }
   fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
   bpf_map_update_elem(&ll_write_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
   return 0;
 }
 
@@ -243,13 +257,14 @@ int ll_fsync_enter(struct pt_regs *ctx) {
   __u32 s_dev = 0;
   __u64 tid = current_tid();
   struct start_info info = {};
-  __u8 selected = 1;
-  if (!read_file_dev(file, &s_dev) || !mount_matches(s_dev)) {
+  __u8 mount_idx = 0;
+  if (!read_file_dev(file, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
     return 0;
   }
   fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
   bpf_map_update_elem(&ll_fsync_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &selected, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
   return 0;
 }
 
@@ -346,15 +361,16 @@ SEC("kprobe/ptlrpc_send_new_req")
 int ptlrpc_send_new_req_enter(struct pt_regs *ctx) {
   __u64 req_ptr = PT_REGS_PARM1(ctx);
   __u64 tid = current_tid();
-  __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
+  __u8 *midx = bpf_map_lookup_elem(&selected_mount_tids, &tid);
   struct start_info info = {};
-  __u8 tracked = 1;
-  if (!selected) {
+  if (!midx) {
     return 0;
   }
+  __u8 mount_idx = *midx;
   fill_start_info(&info, req_ptr);
+  info.mount_idx = mount_idx;
   bpf_map_delete_elem(&selected_mount_tids, &tid);
-  bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &tracked, BPF_ANY);
+  bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &mount_idx, BPF_ANY);
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr);
   return 0;
 }
@@ -366,18 +382,22 @@ int ptlrpc_queue_wait_enter(struct pt_regs *ctx) {
   __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
   __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
   struct start_info info = {};
-  __u8 tracked_value = 1;
+  __u8 mount_idx = 0;
   int selected_ok = selected != 0;
   int tracked_ok = tracked != 0;
   if (!selected_ok && !tracked_ok) {
     return 0;
   }
-  fill_start_info(&info, req_ptr);
   if (selected_ok) {
+    mount_idx = *selected;
     bpf_map_delete_elem(&selected_mount_tids, &tid);
+  } else {
+    mount_idx = *tracked;
   }
+  fill_start_info(&info, req_ptr);
+  info.mount_idx = mount_idx;
   bpf_map_update_elem(&rpc_wait_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&tracked_reqs, &req_ptr, &tracked_value, BPF_ANY);
+  bpf_map_update_elem(&tracked_reqs, &req_ptr, &mount_idx, BPF_ANY);
   return 0;
 }
 
@@ -402,6 +422,7 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
     return 0;
   }
   fill_start_info(&info, req_ptr);
+  info.mount_idx = *tracked;
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr);
   bpf_map_delete_elem(&tracked_reqs, &req_ptr);
   return 0;

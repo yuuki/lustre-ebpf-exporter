@@ -63,7 +63,7 @@ var (
 )
 
 type Config struct {
-	MountPath                string
+	MountPaths               []string
 	Window                   time.Duration
 	Duration                 time.Duration
 	Once                     bool
@@ -78,10 +78,13 @@ type Event struct {
 	Op         string
 	UID        uint32
 	PID        uint32
+	MountIdx   uint32
 	Comm       string
 	DurationUS uint64
 	SizeBytes  uint64
 	RequestPtr uint64
+	MountPath  string
+	FSName     string
 }
 
 type AggregatedMetric struct {
@@ -127,6 +130,7 @@ func parseObserverEvent(sample []byte) (Event, error) {
 		Op:         op,
 		UID:        binary.LittleEndian.Uint32(sample[8:12]),
 		PID:        binary.LittleEndian.Uint32(sample[12:16]),
+		MountIdx:   binary.LittleEndian.Uint32(sample[16:20]),
 		DurationUS: binary.LittleEndian.Uint64(sample[24:32]),
 		SizeBytes:  binary.LittleEndian.Uint64(sample[32:40]),
 		RequestPtr: binary.LittleEndian.Uint64(sample[40:48]),
