@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -29,12 +30,6 @@ func Run(ctx context.Context, cfg Config) error {
 		mountInfos = append(mountInfos, mi)
 	}
 
-	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath)
-	if err != nil {
-		return err
-	}
-	defer exporter.Shutdown(context.Background())
-
 	source, err := newEventSource(ctx, cfg, mountInfos)
 	if err != nil {
 		return err
@@ -42,25 +37,20 @@ func Run(ctx context.Context, cfg Config) error {
 	defer source.Close()
 
 	resolver := NewUsernameResolver()
-	aggregator := NewAggregator(resolver)
 
 	lliteMap, rpcMap := source.CounterMaps()
-	counterReader := NewCounterReader(lliteMap, rpcMap, mountInfos, resolver)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, mountInfos, resolver)
+	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
-	ticker := time.NewTicker(cfg.Window)
-	defer ticker.Stop()
-	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
-
-	flush := func(reason string) {
-		counterMetrics := counterReader.Read()
-		histMetrics := aggregator.Collect()
-		if debugEnabled {
-			log.Printf("debug: flushing %d counters + %d hist/inflight on %s",
-				len(counterMetrics), len(histMetrics), reason)
-		}
-		exporter.Export(counterMetrics)
-		exporter.Export(histMetrics)
+	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector)
+	if err != nil {
+		return err
 	}
+	defer exporter.Shutdown(context.Background())
+
+	inflightTracker := NewInflightTracker(exporter.Inflight, resolver)
+
+	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
 	var durationTimer <-chan time.Time
 	if cfg.Duration > 0 {
@@ -69,22 +59,24 @@ func Run(ctx context.Context, cfg Config) error {
 		durationTimer = timer.C
 	}
 
+	var onceTimer <-chan time.Time
+	if cfg.Once {
+		t := time.NewTimer(cfg.DrainInterval)
+		defer t.Stop()
+		onceTimer = t.C
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			flush("context cancellation")
 			return nil
 		case <-durationTimer:
-			flush("duration timeout")
 			return nil
-		case <-ticker.C:
-			flush("ticker")
-			if cfg.Once {
-				return nil
-			}
+		case <-onceTimer:
+			counterCollector.DrainOnce()
+			return nil
 		case event, ok := <-source.Events():
 			if !ok {
-				flush("source close")
 				return nil
 			}
 			if int(event.MountIdx) < len(mountInfos) {
@@ -97,7 +89,44 @@ func Run(ctx context.Context, cfg Config) error {
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
-			aggregator.Consume(event)
+			processEvent(event, exporter, inflightTracker, resolver)
 		}
+	}
+}
+
+func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver) {
+	uid := strconv.FormatUint(uint64(event.UID), 10)
+	username := resolver.Resolve(event.UID)
+	actorType := ClassifyActorType(event.Comm)
+
+	if event.Plane == PlaneLLite {
+		intent := AccessIntentForOp(event.Op)
+		if intent == "" {
+			return
+		}
+		if event.DurationUS > 0 {
+			labels := BuildLLitePrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, intent, event.Op)
+			exporter.AccessLatency.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
+		}
+		return
+	}
+
+	if event.Plane != PlanePtlRPC {
+		return
+	}
+
+	if event.Op == OpQueueWait {
+		if event.DurationUS > 0 {
+			labels := BuildPtlRPCPrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, event.Op)
+			exporter.RPCWaitLat.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
+		}
+		return
+	}
+
+	switch event.Op {
+	case OpSendNewReq:
+		inflight.Update(1, event)
+	case OpFreeReq:
+		inflight.Update(-1, event)
 	}
 }

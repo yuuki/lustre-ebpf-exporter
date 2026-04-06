@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestClassifyActorType(t *testing.T) {
@@ -88,144 +91,125 @@ func testResolver() *UsernameResolver {
 	return r
 }
 
-func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
+// TestDirectObserveUpdatesHistogram verifies that events update
+// Prometheus histogram metrics directly (no aggregator buffering).
+func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator(testResolver())
-	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd", DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-
-	metrics := aggregator.Collect()
-	text := renderMetricsForTest(t, metrics)
-
-	if !strings.Contains(text, MetricAccessDuration) {
-		t.Fatalf("missing access duration metric: %s", text)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(text, MetricInflight) {
+	defer exporter.Shutdown(context.Background())
+
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, resolver)
+
+	events := []Event{
+		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
+		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs"},
+		{Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd", DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs"},
+		{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"},
+		{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"},
+	}
+	for _, event := range events {
+		processEvent(event, exporter, inflight, resolver)
+	}
+
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(text, "lustre_client_access_duration_seconds_bucket") {
+		t.Fatalf("missing histogram family: %s", text)
+	}
+	if !strings.Contains(text, "lustre_client_rpc_wait_duration_seconds_bucket") {
+		t.Fatalf("missing rpc wait histogram: %s", text)
+	}
+	if !strings.Contains(text, "lustre_client_inflight_requests") {
 		t.Fatalf("missing inflight metric: %s", text)
 	}
 }
 
-func TestAggregatorSkipsZeroValuedDuration(t *testing.T) {
+// TestDirectObserveSkipsZeroDuration verifies zero-duration events
+// do not produce histogram observations.
+func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator(testResolver())
-	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
 
-	metrics := aggregator.Collect()
-	names := map[string]bool{}
-	for _, metric := range metrics {
-		names[metric.Name] = true
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, resolver)
+
+	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, exporter, inflight, resolver)
+
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if names[MetricAccessDuration] {
-		t.Fatalf("unexpected zero-valued duration metric: %#v", metrics)
+	if strings.Contains(text, "lustre_client_access_duration_seconds_bucket") {
+		t.Fatalf("unexpected histogram for zero-duration event: %s", text)
 	}
 }
 
-func TestAggregatorInflightClampsAtZero(t *testing.T) {
+func TestInflightTrackerClampsAtZero(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator(testResolver())
-	// free_req without prior send_new_req (simulates exporter starting mid-flight)
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	gauge := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "test_inflight", Help: "test"},
+		baseLabels,
+	)
+	resolver := testResolver()
+	tracker := NewInflightTracker(gauge, resolver)
 
-	metrics := aggregator.Collect()
-	for _, metric := range metrics {
-		if metric.Name == MetricInflight {
-			if metric.Value < 0 {
-				t.Fatalf("inflight went negative: %f", metric.Value)
-			}
-			return
-		}
+	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
+
+	// free_req without prior send_new_req
+	tracker.Update(-1, event)
+	tracker.Update(-1, event)
+
+	// Verify the gauge never goes negative
+	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs")
+	metric := gauge.With(labels)
+	dto := readGaugeValue(t, metric)
+	if dto < 0 {
+		t.Fatalf("inflight went negative: %f", dto)
 	}
-	t.Fatal("missing inflight metric")
 }
 
-func TestAggregatorInflightPersistsAcrossCollect(t *testing.T) {
+func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator(testResolver())
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	gauge := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "test_inflight2", Help: "test"},
+		baseLabels,
+	)
+	resolver := testResolver()
+	tracker := NewInflightTracker(gauge, resolver)
 
-	// First Collect: inflight should be 2
-	metrics := aggregator.Collect()
-	var val float64
-	for _, m := range metrics {
-		if m.Name == MetricInflight {
-			val = m.Value
-		}
-	}
+	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
+
+	tracker.Update(+1, event)
+	tracker.Update(+1, event)
+
+	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs")
+	val := readGaugeValue(t, gauge.With(labels))
 	if val != 2 {
-		t.Fatalf("expected inflight=2 after first collect, got %f", val)
+		t.Fatalf("expected inflight=2, got %f", val)
 	}
 
-	// free one request, then Collect again: should be 1
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	metrics = aggregator.Collect()
-	for _, m := range metrics {
-		if m.Name == MetricInflight {
-			val = m.Value
-		}
-	}
+	// free one request
+	tracker.Update(-1, event)
+	val = readGaugeValue(t, gauge.With(labels))
 	if val != 1 {
-		t.Fatalf("expected inflight=1 after second collect, got %f", val)
+		t.Fatalf("expected inflight=1, got %f", val)
 	}
-}
-
-func TestAggregatorInflightEvictsZeroOnCollect(t *testing.T) {
-	t.Parallel()
-
-	aggregator := NewAggregator(testResolver())
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
-
-	// First Collect: should report inflight=0
-	metrics := aggregator.Collect()
-	found := false
-	for _, m := range metrics {
-		if m.Name == MetricInflight {
-			found = true
-			if m.Value != 0 {
-				t.Fatalf("expected inflight=0, got %f", m.Value)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("missing inflight metric in first collect")
-	}
-
-	// Second Collect: zero-valued entry should have been evicted
-	metrics = aggregator.Collect()
-	for _, m := range metrics {
-		if m.Name == MetricInflight {
-			t.Fatal("expected zero-valued inflight to be evicted, but it was still reported")
-		}
-	}
-}
-
-func TestAggregatorHistogramCapsAtMax(t *testing.T) {
-	t.Parallel()
-
-	aggregator := NewAggregator(testResolver())
-	for i := 0; i < MaxHistogramSamples+100; i++ {
-		aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: uint64(i + 1), SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"})
-	}
-	metrics := aggregator.Collect()
-	for _, m := range metrics {
-		if m.Name == MetricAccessDuration {
-			if len(m.Histogram) > MaxHistogramSamples {
-				t.Fatalf("histogram has %d samples, expected at most %d", len(m.Histogram), MaxHistogramSamples)
-			}
-			return
-		}
-	}
-	t.Fatal("missing access duration metric")
 }
 
 func TestSanitizeCommTrimsLeadingAndTrailingNulls(t *testing.T) {
@@ -281,44 +265,29 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter(
-		"127.0.0.1:0",
-		"/metrics",
-	)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
-	exporter.Export([]AggregatedMetric{
-		{
-			Name:  MetricAccessOps,
-			Type:  "counter",
-			Value: 2,
-			Attributes: map[string]string{
-				"user.id": "1001", "user.name": "testuser", "process.name": "dd", "lustre.actor.type": "user",
-				"lustre.access.intent": "data_write", "lustre.access.op": "write",
-				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
-			},
-		},
-		{
-			Name:      MetricAccessDuration,
-			Type:      "histogram",
-			Histogram: []float64{250, 500},
-			Attributes: map[string]string{
-				"user.id": "1001", "user.name": "testuser", "process.name": "dd", "lustre.actor.type": "user",
-				"lustre.access.intent": "data_write", "lustre.access.op": "write",
-				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
-			},
-		},
-	})
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, resolver)
+
+	// Feed events through the direct pipeline
+	processEvent(Event{
+		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, exporter, inflight, resolver)
+
+	processEvent(Event{
+		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, exporter, inflight, resolver)
 
 	text, err := exporter.RenderText()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(text, "lustre_client_access_operations_total") {
-		t.Fatalf("missing counter family: %s", text)
 	}
 	if !strings.Contains(text, "lustre_client_access_duration_seconds_bucket") {
 		t.Fatalf("missing histogram family: %s", text)
@@ -341,15 +310,6 @@ func (f fakeFileInfo) Mode() os.FileMode  { return 0 }
 func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
 func (f fakeFileInfo) IsDir() bool        { return true }
 func (f fakeFileInfo) Sys() any           { return f.sys }
-
-func renderMetricsForTest(t *testing.T, metrics []AggregatedMetric) string {
-	t.Helper()
-	var b strings.Builder
-	for _, metric := range metrics {
-		b.WriteString(metric.Name)
-	}
-	return b.String()
-}
 
 func TestActorTypeName(t *testing.T) {
 	t.Parallel()
@@ -410,4 +370,17 @@ func TestBpfCounterValSize(t *testing.T) {
 	if size != 16 {
 		t.Fatalf("bpfCounterVal size = %d, want 16 (must match BPF struct)", size)
 	}
+}
+
+// readGaugeValue extracts the float64 value from a Prometheus gauge metric.
+func readGaugeValue(t *testing.T, metric prometheus.Gauge) float64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 1)
+	metric.(prometheus.Collector).Collect(ch)
+	m := <-ch
+	var d dto.Metric
+	if err := m.Write(&d); err != nil {
+		t.Fatalf("failed to read gauge value: %v", err)
+	}
+	return d.GetGauge().GetValue()
 }

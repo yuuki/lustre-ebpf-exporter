@@ -21,7 +21,7 @@ make stage-go-exporter      # copy BPF .o to dist/
 go test ./...
 
 # Run a single Go test
-go test ./internal/goexporter -run TestAggregatorCollectsExpectedMetrics
+go test ./internal/goexporter -run TestDirectObserveUpdatesHistogram
 
 # Python tests
 pytest tests/test_observer_agent.py -q
@@ -47,16 +47,17 @@ Actors are classified as `user`, `batch_job` (slurm/pbs/sge/lsf), `system_daemon
 
 ### Go Exporter (`cmd/` + `internal/goexporter/`)
 
-Pipeline: **BPF perf events → Event parsing → Aggregator → PrometheusExporter**
+Pipeline: **BPF perf events → immediate Prometheus update** (histograms/gauges) + **BPF counter maps → background drain → Custom Collector** (counters)
 
 - `internal/bpf/lustre_ebpf_exporter.bpf.c` — CO-RE BPF program. Events are 64-byte `observer_event` structs sent via perf buffer. Mount filtering is done kernel-side via `config_map`.
 - `internal/goexporter/runtime_linux.go` — `linuxEventSource` loads the BPF collection, attaches kprobes (required + optional), reads perf events. Uses `loadCollectionWithOptionalPrograms` to retry without optional programs on load failure.
 - `internal/goexporter/runtime_stub.go` — non-Linux build stub (returns error).
 - `internal/goexporter/types.go` — `Event`, `AggregatedMetric`, raw event parsing. The 64-byte binary layout must stay in sync with the BPF C struct.
-- `internal/goexporter/aggregate.go` — `Aggregator` consumes events, builds counters/histograms keyed by NUL-delimited metric name + sorted attributes.
-- `internal/goexporter/prometheus.go` — maps internal OTel-style metric names (`lustre.client.access.operations`) to Prometheus families (`lustre_client_access_operations_total`).
+- `internal/goexporter/aggregate.go` — `InflightTracker` wraps a Prometheus GaugeVec with zero-clamping for in-flight PtlRPC request tracking. Also provides Prometheus label builder functions.
+- `internal/goexporter/bpf_counter_collector.go` — `BPFCounterCollector` implements `prometheus.Collector`. A background drain goroutine periodically reads BPF PERCPU_HASH counter maps and accumulates values in a Go-side map; `Collect()` returns them at scrape time.
+- `internal/goexporter/prometheus.go` — `PrometheusExporter` serves histogram and gauge metrics directly (updated on event arrival). Counter metrics are provided by the registered `BPFCounterCollector`.
 - `internal/goexporter/mount.go` — resolves Lustre mount path to device major/minor via `/proc/mounts`.
-- `internal/goexporter/runtime.go` — `Run()` orchestrates the tick-aggregate-export loop.
+- `internal/goexporter/runtime.go` — `Run()` processes perf events in a select loop, updating Prometheus histograms/gauges immediately. No periodic flush timer.
 
 ### Legacy Python Exporter (`lustre_client_observer/agent.py`)
 

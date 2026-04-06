@@ -29,14 +29,14 @@ func (m *mountPathsFlag) Set(value string) error {
 
 func main() {
 	cfg := goexporter.Config{}
-	var windowSeconds int
+	var drainIntervalSeconds int
 	var durationSeconds int
 	var mounts mountPathsFlag
 
 	flag.Var(&mounts, "mount", "Lustre client mount path (can be specified multiple times)")
-	flag.IntVar(&windowSeconds, "window-seconds", 10, "Aggregation window size in seconds")
+	flag.IntVar(&drainIntervalSeconds, "drain-interval", 5, "BPF counter map drain interval in seconds")
 	flag.IntVar(&durationSeconds, "duration", 0, "Stop after the given duration in seconds; 0 means run until interrupted")
-	flag.BoolVar(&cfg.Once, "once", false, "Flush one aggregation window and exit")
+	flag.BoolVar(&cfg.Once, "once", false, "Drain counters once and exit")
 	flag.BoolVar(
 		&cfg.LegacySymbolAllowMissing,
 		"legacy-symbol-allow-missing",
@@ -67,18 +67,18 @@ func main() {
 	}
 	cfg.MountPaths = mounts
 
-	if windowSeconds <= 0 {
-		log.Fatal("--window-seconds must be greater than zero")
+	if drainIntervalSeconds <= 0 {
+		log.Fatal("--drain-interval must be greater than zero")
 	}
 	if durationSeconds < 0 {
 		log.Fatal("--duration must be greater than or equal to zero")
 	}
-	cfg.Window = time.Duration(windowSeconds) * time.Second
+	cfg.DrainInterval = time.Duration(drainIntervalSeconds) * time.Second
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
 
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
-	log.Printf("Aggregation window: %s", cfg.Window)
+	log.Printf("BPF counter drain interval: %s", cfg.DrainInterval)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

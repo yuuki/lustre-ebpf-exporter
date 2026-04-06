@@ -60,7 +60,7 @@ const (
 	AttrFSName       = "lustre.fs.name"
 )
 
-const MaxHistogramSamples = 10_000
+const DefaultDrainInterval = 5 * time.Second
 
 const (
 	ActorUser         = "user"
@@ -164,7 +164,7 @@ var (
 
 type Config struct {
 	MountPaths               []string
-	Window                   time.Duration
+	DrainInterval            time.Duration
 	Duration                 time.Duration
 	Once                     bool
 	LegacySymbolAllowMissing bool

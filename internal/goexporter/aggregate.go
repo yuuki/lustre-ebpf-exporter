@@ -5,28 +5,52 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Aggregator handles histograms and inflight gauges from perf events.
-// Monotonic counters are read directly from BPF per-CPU hash maps by CounterReader.
-type Aggregator struct {
-	histograms map[string][]float64
-	inflight   map[string]float64 // persistent gauge, not reset on Collect
-	resolver   *UsernameResolver
+// InflightTracker tracks in-flight PtlRPC requests with zero-clamping
+// and updates a Prometheus GaugeVec. Thread-safe.
+type InflightTracker struct {
+	mu       sync.Mutex
+	counts   map[string]float64
+	gauge    *prometheus.GaugeVec
+	resolver *UsernameResolver
 }
 
-func NewAggregator(resolver *UsernameResolver) *Aggregator {
-	return &Aggregator{
-		histograms: map[string][]float64{},
-		inflight:   map[string]float64{},
-		resolver:   resolver,
+func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver) *InflightTracker {
+	return &InflightTracker{
+		counts:   map[string]float64{},
+		gauge:    gauge,
+		resolver: resolver,
 	}
 }
 
-func (a *Aggregator) baseAttrs(event Event) map[string]string {
-	return buildCoreAttrs(
+// Update adjusts the inflight count for the given event by delta (+1 or -1),
+// clamps at zero, and updates the Prometheus gauge.
+func (t *InflightTracker) Update(delta float64, event Event) {
+	labels := t.buildBaseLabels(event)
+	key := labelsKey(labels)
+
+	t.mu.Lock()
+	t.counts[key] += delta
+	if t.counts[key] < 0 {
+		t.counts[key] = 0
+	}
+	val := t.counts[key]
+	if val == 0 {
+		delete(t.counts, key)
+	}
+	t.mu.Unlock()
+
+	t.gauge.With(labels).Set(val)
+}
+
+func (t *InflightTracker) buildBaseLabels(event Event) prometheus.Labels {
+	return BuildBasePrometheusLabels(
 		strconv.FormatUint(uint64(event.UID), 10),
-		a.resolver.Resolve(event.UID),
+		t.resolver.Resolve(event.UID),
 		event.Comm,
 		ClassifyActorType(event.Comm),
 		event.MountPath,
@@ -34,6 +58,59 @@ func (a *Aggregator) baseAttrs(event Event) map[string]string {
 	)
 }
 
+// labelsKey builds a deterministic string key from sorted label key-value pairs.
+func labelsKey(labels prometheus.Labels) string {
+	keys := slices.Sorted(maps.Keys(labels))
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteByte(0)
+		b.WriteString(labels[k])
+		b.WriteByte(0)
+	}
+	return b.String()
+}
+
+// BuildBasePrometheusLabels creates the base label set used by all metric types.
+func BuildBasePrometheusLabels(uid, username, comm, actorType, mountPath, fsName string) prometheus.Labels {
+	return prometheus.Labels{
+		"fs":         fsName,
+		"mount":      mountPath,
+		"uid":        uid,
+		"username":   username,
+		"process":    comm,
+		"actor_type": actorType,
+	}
+}
+
+// BuildLLitePrometheusLabels creates the label set for llite metrics (base + intent + op).
+func BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op string) prometheus.Labels {
+	return prometheus.Labels{
+		"fs":            fsName,
+		"mount":         mountPath,
+		"access_intent": intent,
+		"op":            op,
+		"uid":           uid,
+		"username":      username,
+		"process":       comm,
+		"actor_type":    actorType,
+	}
+}
+
+// BuildPtlRPCPrometheusLabels creates the label set for ptlrpc metrics (base + op).
+func BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op string) prometheus.Labels {
+	return prometheus.Labels{
+		"fs":         fsName,
+		"mount":      mountPath,
+		"op":         op,
+		"uid":        uid,
+		"username":   username,
+		"process":    comm,
+		"actor_type": actorType,
+	}
+}
+
+// buildCoreAttrs builds OTel-style attribute maps (used by BPFCounterCollector).
 func buildCoreAttrs(uid, username, comm, actorType, mountPath, fsName string) map[string]string {
 	return map[string]string{
 		AttrUserID:      uid,
@@ -43,114 +120,4 @@ func buildCoreAttrs(uid, username, comm, actorType, mountPath, fsName string) ma
 		AttrMountPath:   mountPath,
 		AttrFSName:      fsName,
 	}
-}
-
-func (a *Aggregator) Consume(event Event) {
-	if event.Plane == PlaneLLite {
-		intent := AccessIntentForOp(event.Op)
-		if intent == "" {
-			return
-		}
-		if event.DurationUS > 0 {
-			attrs := a.baseAttrs(event)
-			attrs[AttrAccessIntent] = intent
-			attrs[AttrAccessOp] = event.Op
-			a.addHistogram(MetricAccessDuration, float64(event.DurationUS), attrs)
-		}
-		return
-	}
-
-	if event.Plane != PlanePtlRPC {
-		return
-	}
-	if event.Op == OpQueueWait {
-		if event.DurationUS > 0 {
-			attrs := a.baseAttrs(event)
-			attrs[AttrAccessOp] = event.Op
-			a.addHistogram(MetricRPCWaitDuration, float64(event.DurationUS), attrs)
-		}
-		return
-	}
-	attrs := a.baseAttrs(event)
-	switch event.Op {
-	case OpSendNewReq:
-		a.updateInflight(1, attrs)
-	case OpFreeReq:
-		a.updateInflight(-1, attrs)
-	}
-}
-
-func (a *Aggregator) Collect() []AggregatedMetric {
-	metrics := make([]AggregatedMetric, 0, len(a.histograms)+len(a.inflight))
-
-	for _, key := range slices.Sorted(maps.Keys(a.inflight)) {
-		_, attrs := splitMetricKey(key)
-		metrics = append(metrics, AggregatedMetric{
-			Name:       MetricInflight,
-			Type:       "gauge",
-			Unit:       "1",
-			Value:      a.inflight[key],
-			Attributes: attrs,
-		})
-	}
-	for key, val := range a.inflight {
-		if val == 0 {
-			delete(a.inflight, key)
-		}
-	}
-
-	for _, key := range slices.Sorted(maps.Keys(a.histograms)) {
-		name, attrs := splitMetricKey(key)
-		values := append([]float64(nil), a.histograms[key]...)
-		metrics = append(metrics, AggregatedMetric{
-			Name:       name,
-			Type:       "histogram",
-			Unit:       "us",
-			Histogram:  values,
-			Attributes: attrs,
-		})
-	}
-
-	a.histograms = map[string][]float64{}
-	return metrics
-}
-
-func (a *Aggregator) updateInflight(delta float64, attrs map[string]string) {
-	key := buildMetricKey(MetricInflight, attrs)
-	a.inflight[key] += delta
-	if a.inflight[key] < 0 {
-		a.inflight[key] = 0
-	}
-}
-
-func (a *Aggregator) addHistogram(name string, value float64, attrs map[string]string) {
-	key := buildMetricKey(name, attrs)
-	s := a.histograms[key]
-	if len(s) >= MaxHistogramSamples {
-		return
-	}
-	a.histograms[key] = append(s, value)
-}
-
-func buildMetricKey(name string, attrs map[string]string) string {
-	keys := slices.Sorted(maps.Keys(attrs))
-	var b strings.Builder
-	b.WriteString(name)
-	for _, key := range keys {
-		b.WriteByte(0)
-		b.WriteString(key)
-		b.WriteByte(0)
-		b.WriteString(attrs[key])
-	}
-	return b.String()
-}
-
-func splitMetricKey(key string) (string, map[string]string) {
-	parts := strings.Split(key, "\x00")
-	name := parts[0]
-	attrs := map[string]string{}
-	for i := 1; i+1 < len(parts); i += 2 {
-		attrs[parts[i]] = parts[i+1]
-	}
-	return name, attrs
 }
