@@ -24,7 +24,7 @@ generate-go-exporter:
 
 .PHONY: build-go-exporter
 build-go-exporter:
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -ldflags '$(LDFLAGS)' $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-ebpf-exporter
+	CGO_ENABLED=1 GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -ldflags '$(LDFLAGS)' $(GOFLAGS) -o $(EXPORTER_BIN) ./cmd/lustre-ebpf-exporter
 
 .PHONY: test-go
 test-go:
