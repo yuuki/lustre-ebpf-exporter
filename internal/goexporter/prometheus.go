@@ -14,6 +14,12 @@ import (
 	"github.com/prometheus/common/expfmt"
 )
 
+var (
+	baseLabels   = []string{"fs", "mount", "uid", "username", "process", "actor_type"}
+	ptlrpcLabels = []string{"fs", "mount", "op", "uid", "username", "process", "actor_type"}
+	lliteLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"}
+)
+
 type PrometheusExporter struct {
 	registry *prometheus.Registry
 	server   *http.Server
@@ -33,27 +39,27 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string) (*Prometh
 		registry: registry,
 		accessOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_access_operations_total", Help: "Aggregated llite access operation count"},
-			[]string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"},
+			lliteLabels,
 		),
 		accessLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			[]string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"},
+			lliteLabels,
 		),
 		dataBytes: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_data_bytes_total", Help: "Aggregated llite data volume in bytes"},
-			[]string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"},
+			lliteLabels,
 		),
 		rpcWaitOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_rpc_wait_operations_total", Help: "Aggregated ptlrpc queue wait count"},
-			[]string{"fs", "mount", "op", "uid", "username", "process", "actor_type"},
+			ptlrpcLabels,
 		),
 		rpcWaitLat: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			[]string{"fs", "mount", "op", "uid", "username", "process", "actor_type"},
+			ptlrpcLabels,
 		),
 		inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
-			[]string{"fs", "mount", "uid", "username", "process", "actor_type"},
+			baseLabels,
 		),
 	}
 	registry.MustRegister(
@@ -79,23 +85,23 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string) (*Prometh
 func (e *PrometheusExporter) Export(metrics []AggregatedMetric) {
 	for _, metric := range metrics {
 		switch metric.Name {
-		case "lustre.client.access.operations":
+		case MetricAccessOps:
 			e.accessOps.With(e.labels(metric)).Add(metric.Value)
-		case "lustre.client.access.duration":
+		case MetricAccessDuration:
 			observer := e.accessLatency.With(e.labels(metric))
 			for _, value := range metric.Histogram {
 				observer.Observe(value / 1_000_000.0)
 			}
-		case "lustre.client.data.bytes":
+		case MetricDataBytes:
 			e.dataBytes.With(e.labels(metric)).Add(metric.Value)
-		case "lustre.client.rpc.wait.operations":
+		case MetricRPCWaitOps:
 			e.rpcWaitOps.With(e.labels(metric)).Add(metric.Value)
-		case "lustre.client.rpc.wait.duration":
+		case MetricRPCWaitDuration:
 			observer := e.rpcWaitLat.With(e.labels(metric))
 			for _, value := range metric.Histogram {
 				observer.Observe(value / 1_000_000.0)
 			}
-		case "lustre.client.inflight.requests":
+		case MetricInflight:
 			e.inflight.With(e.labels(metric)).Set(metric.Value)
 		}
 	}
@@ -118,17 +124,17 @@ func (e *PrometheusExporter) RenderText() (string, error) {
 
 func (e *PrometheusExporter) labels(metric AggregatedMetric) prometheus.Labels {
 	labels := prometheus.Labels{
-		"fs":         metric.Attributes["lustre.fs.name"],
-		"mount":      metric.Attributes["lustre.mount.path"],
-		"uid":        metric.Attributes["user.id"],
-		"username":   metric.Attributes["user.name"],
-		"process":    metric.Attributes["process.name"],
-		"actor_type": metric.Attributes["lustre.actor.type"],
+		"fs":         metric.Attributes[AttrFSName],
+		"mount":      metric.Attributes[AttrMountPath],
+		"uid":        metric.Attributes[AttrUserID],
+		"username":   metric.Attributes[AttrUserName],
+		"process":    metric.Attributes[AttrProcessName],
+		"actor_type": metric.Attributes[AttrActorType],
 	}
-	if accessIntent, ok := metric.Attributes["lustre.access.intent"]; ok {
+	if accessIntent, ok := metric.Attributes[AttrAccessIntent]; ok {
 		labels["access_intent"] = accessIntent
 	}
-	if op, ok := metric.Attributes["lustre.access.op"]; ok {
+	if op, ok := metric.Attributes[AttrAccessOp]; ok {
 		labels["op"] = op
 	}
 	return labels
