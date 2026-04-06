@@ -33,27 +33,27 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string) (*Prometh
 		registry: registry,
 		accessOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_access_operations_total", Help: "Aggregated llite access operation count"},
-			[]string{"fs", "mount", "access_intent", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"},
 		),
 		accessLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			[]string{"fs", "mount", "access_intent", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"},
 		),
 		dataBytes: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_data_bytes_total", Help: "Aggregated llite data volume in bytes"},
-			[]string{"fs", "mount", "access_intent", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"},
 		),
 		rpcWaitOps: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "lustre_client_rpc_wait_operations_total", Help: "Aggregated ptlrpc queue wait count"},
-			[]string{"fs", "mount", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "op", "uid", "username", "process", "actor_type"},
 		),
 		rpcWaitLat: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			[]string{"fs", "mount", "op", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "op", "uid", "username", "process", "actor_type"},
 		),
 		inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
-			[]string{"fs", "mount", "uid", "process", "actor_type"},
+			[]string{"fs", "mount", "uid", "username", "process", "actor_type"},
 		),
 	}
 	registry.MustRegister(
@@ -121,6 +121,7 @@ func (e *PrometheusExporter) labels(metric AggregatedMetric) prometheus.Labels {
 		"fs":         metric.Attributes["lustre.fs.name"],
 		"mount":      metric.Attributes["lustre.mount.path"],
 		"uid":        metric.Attributes["user.id"],
+		"username":   metric.Attributes["user.name"],
 		"process":    metric.Attributes["process.name"],
 		"actor_type": metric.Attributes["lustre.actor.type"],
 	}

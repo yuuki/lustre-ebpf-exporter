@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from unittest.mock import patch
+
 from lustre_client_observer.agent import (
     AggregatedMetric,
     EventWindowAggregator,
@@ -58,7 +60,8 @@ def test_parse_ptlrpc_event_infers_worker_actor() -> None:
     assert event.request_ptr == "0xffff"
 
 
-def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
+@patch("lustre_client_observer.agent.resolve_username", return_value="testuser")
+def test_window_aggregator_sums_counts_bytes_and_durations(mock_resolve) -> None:
     aggregator = EventWindowAggregator()
     aggregator.consume(
         parse_event_line(
@@ -85,6 +88,7 @@ def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
         metric_type="counter",
         attributes={
             "user.id": "1001",
+            "user.name": "testuser",
             "process.name": "dd",
             "lustre.access.intent": "data_write",
             "lustre.access.op": "write",
@@ -98,6 +102,7 @@ def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
         metric_type="counter",
         attributes={
             "user.id": "1001",
+            "user.name": "testuser",
             "process.name": "dd",
             "lustre.access.intent": "data_write",
             "lustre.access.op": "write",
@@ -111,6 +116,7 @@ def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
         metric_type="counter",
         attributes={
             "user.id": "1001",
+            "user.name": "testuser",
             "process.name": "dd",
             "lustre.actor.type": "user",
             "lustre.access.op": "queue_wait",
@@ -128,7 +134,8 @@ def test_window_aggregator_sums_counts_bytes_and_durations() -> None:
     assert duration_metrics[0].metric_type == "histogram"
 
 
-def test_inflight_requests_uses_single_attribute_set_for_send_and_free() -> None:
+@patch("lustre_client_observer.agent.resolve_username", return_value="testuser")
+def test_inflight_requests_uses_single_attribute_set_for_send_and_free(mock_resolve) -> None:
     aggregator = EventWindowAggregator()
     aggregator.consume(
         parse_event_line(
@@ -150,6 +157,7 @@ def test_inflight_requests_uses_single_attribute_set_for_send_and_free() -> None
         metric_type="updowncounter",
         attributes={
             "user.id": "1001",
+            "user.name": "testuser",
             "process.name": "dd",
             "lustre.actor.type": "user",
         },
@@ -176,6 +184,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     metric_type="counter",
                     attributes={
                         "user.id": "1001",
+                        "user.name": "testuser",
                         "process.name": "dd",
                         "lustre.access.intent": "data_write",
                         "lustre.access.op": "write",
@@ -189,6 +198,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     metric_type="histogram",
                     attributes={
                         "user.id": "1001",
+                        "user.name": "testuser",
                         "process.name": "dd",
                         "lustre.access.intent": "data_write",
                         "lustre.access.op": "write",
@@ -202,6 +212,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     metric_type="counter",
                     attributes={
                         "user.id": "1001",
+                        "user.name": "testuser",
                         "process.name": "dd",
                         "lustre.access.intent": "data_write",
                         "lustre.access.op": "write",
@@ -215,6 +226,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     metric_type="counter",
                     attributes={
                         "user.id": "1001",
+                        "user.name": "testuser",
                         "process.name": "dd",
                         "lustre.access.op": "queue_wait",
                         "lustre.actor.type": "user",
@@ -227,6 +239,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     metric_type="histogram",
                     attributes={
                         "user.id": "1001",
+                        "user.name": "testuser",
                         "process.name": "dd",
                         "lustre.access.op": "queue_wait",
                         "lustre.actor.type": "user",
@@ -239,6 +252,7 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
                     metric_type="updowncounter",
                     attributes={
                         "user.id": "1001",
+                        "user.name": "testuser",
                         "process.name": "dd",
                         "lustre.actor.type": "user",
                     },
@@ -250,17 +264,17 @@ def test_prometheus_exporter_maps_aggregated_metrics_to_prometheus_families() ->
     finally:
         exporter.shutdown()
 
-    assert 'lustre_client_access_operations_total{access_intent="data_write",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 2.0' in text
+    assert 'lustre_client_access_operations_total{access_intent="data_write",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001",username="testuser"} 2.0' in text
     assert "lustre_client_access_duration_seconds_bucket" in text
     assert 'access_intent="data_write"' in text
     assert 'mount="/mnt/lustre"' in text
     assert 'op="write"' in text
     assert "lustre_client_access_duration_seconds_sum" in text
     assert "0.00075" in text
-    assert 'lustre_client_data_bytes_total{access_intent="data_write",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001"} 1.572864e+06' in text
-    assert 'lustre_client_rpc_wait_operations_total{actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="queue_wait",process="dd",uid="1001"} 3.0' in text
+    assert 'lustre_client_data_bytes_total{access_intent="data_write",actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="write",process="dd",uid="1001",username="testuser"} 1.572864e+06' in text
+    assert 'lustre_client_rpc_wait_operations_total{actor_type="user",fs="lustrefs",mount="/mnt/lustre",op="queue_wait",process="dd",uid="1001",username="testuser"} 3.0' in text
     assert "lustre_client_rpc_wait_duration_seconds_sum" in text
-    assert 'lustre_client_inflight_requests{actor_type="user",fs="lustrefs",mount="/mnt/lustre",process="dd",uid="1001"} -1.0' in text
+    assert 'lustre_client_inflight_requests{actor_type="user",fs="lustrefs",mount="/mnt/lustre",process="dd",uid="1001",username="testuser"} -1.0' in text
 
 
 def test_arg_parser_defaults_to_prometheus_exporter() -> None:

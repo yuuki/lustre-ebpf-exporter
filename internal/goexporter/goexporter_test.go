@@ -81,10 +81,16 @@ func TestResolveMountInfoFromText(t *testing.T) {
 	}
 }
 
+func testResolver() *UsernameResolver {
+	r := NewUsernameResolver()
+	r.cache.Store(uint32(1001), "testuser")
+	return r
+}
+
 func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator()
+	aggregator := NewAggregator(testResolver())
 	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"})
 	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs"})
 	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd", DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs"})
@@ -114,7 +120,7 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator()
+	aggregator := NewAggregator(testResolver())
 	aggregator.Consume(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"})
 
 	metrics := aggregator.Collect()
@@ -137,7 +143,7 @@ func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 func TestAggregatorInflightClampsAtZero(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator()
+	aggregator := NewAggregator(testResolver())
 	// free_req without prior send_new_req (simulates exporter starting mid-flight)
 	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
 	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
@@ -157,7 +163,7 @@ func TestAggregatorInflightClampsAtZero(t *testing.T) {
 func TestAggregatorInflightPersistsAcrossCollect(t *testing.T) {
 	t.Parallel()
 
-	aggregator := NewAggregator()
+	aggregator := NewAggregator(testResolver())
 	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
 	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
 
@@ -254,7 +260,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			Type:  "counter",
 			Value: 2,
 			Attributes: map[string]string{
-				"user.id": "1001", "process.name": "dd", "lustre.actor.type": "user",
+				"user.id": "1001", "user.name": "testuser", "process.name": "dd", "lustre.actor.type": "user",
 				"lustre.access.intent": "data_write", "lustre.access.op": "write",
 				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
 			},
@@ -264,7 +270,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			Type:      "histogram",
 			Histogram: []float64{250, 500},
 			Attributes: map[string]string{
-				"user.id": "1001", "process.name": "dd", "lustre.actor.type": "user",
+				"user.id": "1001", "user.name": "testuser", "process.name": "dd", "lustre.actor.type": "user",
 				"lustre.access.intent": "data_write", "lustre.access.op": "write",
 				"lustre.mount.path": "/mnt/lustre", "lustre.fs.name": "lustrefs",
 			},
@@ -283,6 +289,9 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	}
 	if !strings.Contains(text, "mount=\"/mnt/lustre\"") {
 		t.Fatalf("missing mount label: %s", text)
+	}
+	if !strings.Contains(text, "username=\"testuser\"") {
+		t.Fatalf("missing username label: %s", text)
 	}
 }
 

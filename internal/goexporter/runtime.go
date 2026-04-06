@@ -38,7 +38,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer source.Close()
 
-	aggregator := NewAggregator()
+	aggregator := NewAggregator(NewUsernameResolver())
 	ticker := time.NewTicker(cfg.Window)
 	defer ticker.Stop()
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"

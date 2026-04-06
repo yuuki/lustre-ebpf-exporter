@@ -107,6 +107,22 @@ def classify_actor_type(comm: str) -> str:
     return "user"
 
 
+_username_cache: dict[int, str] = {}
+
+
+def resolve_username(uid: int) -> str:
+    if uid in _username_cache:
+        return _username_cache[uid]
+    try:
+        import pwd
+
+        name = pwd.getpwuid(uid).pw_name
+    except (KeyError, ImportError):
+        name = "unknown"
+    _username_cache[uid] = name
+    return name
+
+
 def access_intent_for_op(op: str) -> str | None:
     return INTENT_FOR_OP.get(op)
 
@@ -212,6 +228,7 @@ class EventWindowAggregator:
     def consume(self, event: EventRecord) -> None:
         base_attributes = {
             "user.id": str(event.uid),
+            "user.name": resolve_username(event.uid),
             "process.name": event.comm,
             "lustre.actor.type": event.actor_type,
         }
@@ -525,9 +542,9 @@ class PrometheusMetricExporter:
         self._server = None
         self._server_thread: threading.Thread | None = None
 
-        access_label_names = ("fs", "mount", "access_intent", "op", "uid", "process", "actor_type")
-        rpc_label_names = ("fs", "mount", "op", "uid", "process", "actor_type")
-        inflight_label_names = ("fs", "mount", "uid", "process", "actor_type")
+        access_label_names = ("fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type")
+        rpc_label_names = ("fs", "mount", "op", "uid", "username", "process", "actor_type")
+        inflight_label_names = ("fs", "mount", "uid", "username", "process", "actor_type")
 
         self._counters = {
             "lustre.client.access.operations": Counter(
@@ -584,6 +601,7 @@ class PrometheusMetricExporter:
             "fs": self._static_labels["fs"],
             "mount": self._static_labels["mount"],
             "uid": metric.attributes["user.id"],
+            "username": metric.attributes.get("user.name", "unknown"),
             "process": metric.attributes["process.name"],
             "actor_type": metric.attributes["lustre.actor.type"],
         }

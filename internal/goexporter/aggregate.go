@@ -10,18 +10,21 @@ type Aggregator struct {
 	counters   map[string]float64
 	histograms map[string][]float64
 	inflight   map[string]float64 // persistent gauge, not reset on Collect
+	resolver   *UsernameResolver
 }
 
-func NewAggregator() *Aggregator {
+func NewAggregator(resolver *UsernameResolver) *Aggregator {
 	return &Aggregator{
 		counters:   map[string]float64{},
 		histograms: map[string][]float64{},
 		inflight:   map[string]float64{},
+		resolver:   resolver,
 	}
 }
 
 func (a *Aggregator) Consume(event Event) {
 	uid := strconv.FormatUint(uint64(event.UID), 10)
+	username := a.resolver.Resolve(event.UID)
 	actorType := ClassifyActorType(event.Comm)
 
 	if event.Plane == PlaneLLite {
@@ -31,6 +34,7 @@ func (a *Aggregator) Consume(event Event) {
 		}
 		attrs := map[string]string{
 			"user.id":              uid,
+			"user.name":            username,
 			"process.name":         event.Comm,
 			"lustre.actor.type":    actorType,
 			"lustre.access.intent": intent,
@@ -54,6 +58,7 @@ func (a *Aggregator) Consume(event Event) {
 	if event.Op == OpQueueWait {
 		attrs := map[string]string{
 			"user.id":           uid,
+			"user.name":         username,
 			"process.name":      event.Comm,
 			"lustre.actor.type": actorType,
 			"lustre.access.op":  event.Op,
@@ -68,6 +73,7 @@ func (a *Aggregator) Consume(event Event) {
 	}
 	attrs := map[string]string{
 		"user.id":           uid,
+		"user.name":         username,
 		"process.name":      event.Comm,
 		"lustre.actor.type": actorType,
 		"lustre.mount.path": event.MountPath,
