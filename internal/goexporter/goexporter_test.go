@@ -100,19 +100,19 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	metrics := aggregator.Collect()
 	text := renderMetricsForTest(t, metrics)
 
-	if !strings.Contains(text, "lustre.client.access.operations") {
+	if !strings.Contains(text, MetricAccessOps) {
 		t.Fatalf("missing access operations metric: %s", text)
 	}
-	if !strings.Contains(text, "lustre.client.access.duration") {
+	if !strings.Contains(text, MetricAccessDuration) {
 		t.Fatalf("missing access duration metric: %s", text)
 	}
-	if !strings.Contains(text, "lustre.client.data.bytes") {
+	if !strings.Contains(text, MetricDataBytes) {
 		t.Fatalf("missing data bytes metric: %s", text)
 	}
-	if !strings.Contains(text, "lustre.client.rpc.wait.operations") {
+	if !strings.Contains(text, MetricRPCWaitOps) {
 		t.Fatalf("missing rpc wait metric: %s", text)
 	}
-	if !strings.Contains(text, "lustre.client.inflight.requests") {
+	if !strings.Contains(text, MetricInflight) {
 		t.Fatalf("missing inflight metric: %s", text)
 	}
 }
@@ -129,13 +129,13 @@ func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 		names[metric.Name] = true
 	}
 
-	if !names["lustre.client.access.operations"] {
+	if !names[MetricAccessOps] {
 		t.Fatalf("missing access operations metric: %#v", metrics)
 	}
-	if names["lustre.client.access.duration"] {
+	if names[MetricAccessDuration] {
 		t.Fatalf("unexpected zero-valued duration metric: %#v", metrics)
 	}
-	if names["lustre.client.data.bytes"] {
+	if names[MetricDataBytes] {
 		t.Fatalf("unexpected zero-valued data bytes metric: %#v", metrics)
 	}
 }
@@ -150,7 +150,7 @@ func TestAggregatorInflightClampsAtZero(t *testing.T) {
 
 	metrics := aggregator.Collect()
 	for _, metric := range metrics {
-		if metric.Name == "lustre.client.inflight.requests" {
+		if metric.Name == MetricInflight {
 			if metric.Value < 0 {
 				t.Fatalf("inflight went negative: %f", metric.Value)
 			}
@@ -171,7 +171,7 @@ func TestAggregatorInflightPersistsAcrossCollect(t *testing.T) {
 	metrics := aggregator.Collect()
 	var val float64
 	for _, m := range metrics {
-		if m.Name == "lustre.client.inflight.requests" {
+		if m.Name == MetricInflight {
 			val = m.Value
 		}
 	}
@@ -183,7 +183,7 @@ func TestAggregatorInflightPersistsAcrossCollect(t *testing.T) {
 	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
 	metrics = aggregator.Collect()
 	for _, m := range metrics {
-		if m.Name == "lustre.client.inflight.requests" {
+		if m.Name == MetricInflight {
 			val = m.Value
 		}
 	}
@@ -306,7 +306,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 
 	exporter.Export([]AggregatedMetric{
 		{
-			Name:  "lustre.client.access.operations",
+			Name:  MetricAccessOps,
 			Type:  "counter",
 			Value: 2,
 			Attributes: map[string]string{
@@ -316,7 +316,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 			},
 		},
 		{
-			Name:      "lustre.client.access.duration",
+			Name:      MetricAccessDuration,
 			Type:      "histogram",
 			Histogram: []float64{250, 500},
 			Attributes: map[string]string{
