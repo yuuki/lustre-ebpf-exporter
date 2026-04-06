@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// Aggregator handles histograms and inflight gauges from perf events.
+// Monotonic counters are read directly from BPF per-CPU hash maps by CounterReader.
 type Aggregator struct {
 	histograms map[string][]float64
 	inflight   map[string]float64 // persistent gauge, not reset on Collect
@@ -22,13 +24,24 @@ func NewAggregator(resolver *UsernameResolver) *Aggregator {
 }
 
 func (a *Aggregator) baseAttrs(event Event) map[string]string {
+	return buildCoreAttrs(
+		strconv.FormatUint(uint64(event.UID), 10),
+		a.resolver.Resolve(event.UID),
+		event.Comm,
+		ClassifyActorType(event.Comm),
+		event.MountPath,
+		event.FSName,
+	)
+}
+
+func buildCoreAttrs(uid, username, comm, actorType, mountPath, fsName string) map[string]string {
 	return map[string]string{
-		AttrUserID:      strconv.FormatUint(uint64(event.UID), 10),
-		AttrUserName:    a.resolver.Resolve(event.UID),
-		AttrProcessName: event.Comm,
-		AttrActorType:   ClassifyActorType(event.Comm),
-		AttrMountPath:   event.MountPath,
-		AttrFSName:      event.FSName,
+		AttrUserID:      uid,
+		AttrUserName:    username,
+		AttrProcessName: comm,
+		AttrActorType:   actorType,
+		AttrMountPath:   mountPath,
+		AttrFSName:      fsName,
 	}
 }
 
@@ -38,8 +51,6 @@ func (a *Aggregator) Consume(event Event) {
 		if intent == "" {
 			return
 		}
-		// Counters (ops_count, bytes_sum) are now authoritative from BPF maps.
-		// Only collect histogram samples from perf events.
 		if event.DurationUS > 0 {
 			attrs := a.baseAttrs(event)
 			attrs[AttrAccessIntent] = intent
@@ -53,7 +64,6 @@ func (a *Aggregator) Consume(event Event) {
 		return
 	}
 	if event.Op == OpQueueWait {
-		// Counter is now authoritative from BPF maps. Only histograms here.
 		if event.DurationUS > 0 {
 			attrs := a.baseAttrs(event)
 			attrs[AttrAccessOp] = event.Op

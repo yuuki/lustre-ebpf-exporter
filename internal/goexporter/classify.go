@@ -4,17 +4,17 @@ import "strings"
 
 func ClassifyActorType(comm string) string {
 	if strings.HasPrefix(comm, "ptlrpcd_") {
-		return "client_worker"
+		return ActorClientWorker
 	}
 	for _, prefix := range BatchJobPrefixes {
 		if strings.HasPrefix(comm, prefix) {
-			return "batch_job"
+			return ActorBatchJob
 		}
 	}
 	if _, ok := DaemonNames[comm]; ok || strings.HasSuffix(comm, "exporter") {
-		return "system_daemon"
+		return ActorSystemDaemon
 	}
-	return "user"
+	return ActorUser
 }
 
 func AccessIntentForOp(op string) string {

@@ -62,6 +62,19 @@ const (
 
 const MaxHistogramSamples = 10_000
 
+const (
+	ActorUser         = "user"
+	ActorClientWorker = "client_worker"
+	ActorBatchJob     = "batch_job"
+	ActorSystemDaemon = "system_daemon"
+
+	IntentNamespaceRead     = "namespace_read"
+	IntentNamespaceMutation = "namespace_mutation"
+	IntentDataRead          = "data_read"
+	IntentDataWrite         = "data_write"
+	IntentSync              = "sync"
+)
+
 // BPF agg_key struct に対応。バイトレイアウトは BPF C struct と一致。
 type bpfAggKey struct {
 	UID       uint32
@@ -95,30 +108,30 @@ const (
 func actorTypeName(raw uint8) string {
 	switch raw {
 	case rawActorUser:
-		return "user"
+		return ActorUser
 	case rawActorClientWorker:
-		return "client_worker"
+		return ActorClientWorker
 	case rawActorBatchJob:
-		return "batch_job"
+		return ActorBatchJob
 	case rawActorSystemDaemon:
-		return "system_daemon"
+		return ActorSystemDaemon
 	default:
-		return "user"
+		return ActorUser
 	}
 }
 
 func intentName(raw uint8) string {
 	switch raw {
 	case rawIntentNamespaceRead:
-		return "namespace_read"
+		return IntentNamespaceRead
 	case rawIntentNamespaceMutation:
-		return "namespace_mutation"
+		return IntentNamespaceMutation
 	case rawIntentDataRead:
-		return "data_read"
+		return IntentDataRead
 	case rawIntentDataWrite:
-		return "data_write"
+		return IntentDataWrite
 	case rawIntentSync:
-		return "sync"
+		return IntentSync
 	default:
 		return ""
 	}
@@ -126,11 +139,11 @@ func intentName(raw uint8) string {
 
 var (
 	IntentForOp = map[string]string{
-		OpLookup: "namespace_read", OpOpen: "namespace_read",
-		OpRename: "namespace_mutation", OpUnlink: "namespace_mutation",
-		OpMkdir: "namespace_mutation", OpRmdir: "namespace_mutation",
-		OpRead: "data_read", OpWrite: "data_write",
-		OpFsync: "sync",
+		OpLookup: IntentNamespaceRead, OpOpen: IntentNamespaceRead,
+		OpRename: IntentNamespaceMutation, OpUnlink: IntentNamespaceMutation,
+		OpMkdir: IntentNamespaceMutation, OpRmdir: IntentNamespaceMutation,
+		OpRead: IntentDataRead, OpWrite: IntentDataWrite,
+		OpFsync: IntentSync,
 	}
 	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
 	DaemonNames = map[string]struct{}{

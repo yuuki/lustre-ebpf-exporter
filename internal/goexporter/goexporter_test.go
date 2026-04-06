@@ -101,8 +101,6 @@ func TestAggregatorCollectsExpectedMetrics(t *testing.T) {
 	metrics := aggregator.Collect()
 	text := renderMetricsForTest(t, metrics)
 
-	// Counters (MetricAccessOps, MetricDataBytes, MetricRPCWaitOps) are now
-	// authoritative from BPF PERCPU_HASH maps, not from Aggregator.
 	if !strings.Contains(text, MetricAccessDuration) {
 		t.Fatalf("missing access duration metric: %s", text)
 	}
@@ -123,7 +121,6 @@ func TestAggregatorSkipsZeroValuedDuration(t *testing.T) {
 		names[metric.Name] = true
 	}
 
-	// Counters are now in BPF maps; Aggregator only handles histograms.
 	if names[MetricAccessDuration] {
 		t.Fatalf("unexpected zero-valued duration metric: %#v", metrics)
 	}

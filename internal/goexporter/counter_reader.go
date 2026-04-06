@@ -73,7 +73,7 @@ func (r *CounterReader) readMap(m *ebpf.Map, isLLite bool) []AggregatedMetric {
 				Type:       "counter",
 				Unit:       "By",
 				Value:      float64(total.BytesSum),
-				Attributes: cloneAttrs(attrs),
+				Attributes: attrs,
 			})
 		}
 
@@ -94,13 +94,6 @@ func (r *CounterReader) readMap(m *ebpf.Map, isLLite bool) []AggregatedMetric {
 }
 
 func (r *CounterReader) buildAttrs(key bpfAggKey) map[string]string {
-	uid := uintToString(key.UID)
-	username := r.resolver.Resolve(key.UID)
-	comm := sanitizeComm(key.Comm[:])
-	actorType := actorTypeName(key.ActorType)
-	intent := intentName(key.Intent)
-	op := rawOpToName(key.Op)
-
 	mountPath := ""
 	fsName := ""
 	if int(key.MountIdx) < len(r.mountInfos) {
@@ -109,29 +102,21 @@ func (r *CounterReader) buildAttrs(key bpfAggKey) map[string]string {
 		fsName = mi.FSName
 	}
 
-	attrs := map[string]string{
-		AttrUserID:      uid,
-		AttrUserName:    username,
-		AttrProcessName: comm,
-		AttrActorType:   actorType,
-		AttrMountPath:   mountPath,
-		AttrFSName:      fsName,
-	}
-	if intent != "" {
+	attrs := buildCoreAttrs(
+		strconv.FormatUint(uint64(key.UID), 10),
+		r.resolver.Resolve(key.UID),
+		sanitizeComm(key.Comm[:]),
+		actorTypeName(key.ActorType),
+		mountPath,
+		fsName,
+	)
+	if intent := intentName(key.Intent); intent != "" {
 		attrs[AttrAccessIntent] = intent
 	}
-	if op != "" {
+	if op := rawOpToName(key.Op); op != "" {
 		attrs[AttrAccessOp] = op
 	}
 	return attrs
-}
-
-func cloneAttrs(src map[string]string) map[string]string {
-	dst := make(map[string]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
 }
 
 func rawOpToName(raw uint8) string {
@@ -142,6 +127,3 @@ func rawOpToName(raw uint8) string {
 	return name
 }
 
-func uintToString(v uint32) string {
-	return strconv.FormatUint(uint64(v), 10)
-}

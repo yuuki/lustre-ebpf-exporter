@@ -54,12 +54,12 @@ func Run(ctx context.Context, cfg Config) error {
 	flush := func(reason string) {
 		counterMetrics := counterReader.Read()
 		histMetrics := aggregator.Collect()
-		metrics := append(counterMetrics, histMetrics...)
 		if debugEnabled {
-			log.Printf("debug: flushing %d metrics (%d counters, %d hist/inflight) on %s",
-				len(metrics), len(counterMetrics), len(histMetrics), reason)
+			log.Printf("debug: flushing %d counters + %d hist/inflight on %s",
+				len(counterMetrics), len(histMetrics), reason)
 		}
-		exporter.Export(metrics)
+		exporter.Export(counterMetrics)
+		exporter.Export(histMetrics)
 	}
 
 	var durationTimer <-chan time.Time
