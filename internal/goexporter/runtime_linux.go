@@ -66,12 +66,13 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	if err != nil {
 		return nil, err
 	}
+	skippedSet := make(map[string]struct{})
 	collection, skippedPrograms, err := loadCollectionWithOptionalPrograms(spec, optional)
 	if err != nil {
 		return nil, err
 	}
-	if len(skippedPrograms) > 0 {
-		log.Printf("warning: disabled optional BPF programs after load failure: %s", strings.Join(skippedPrograms, ", "))
+	for _, name := range skippedPrograms {
+		skippedSet[name] = struct{}{}
 	}
 
 	configMap := collection.Maps["config_map"]
@@ -102,11 +103,11 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		debugHex:   os.Getenv("LUSTRE_OBSERVER_DEBUG_HEX") == "1",
 	}
 
-	if err := source.attachAll(required, cfg.LegacySymbolAllowMissing); err != nil {
+	if err := source.attachAll(required, cfg.LegacySymbolAllowMissing, nil); err != nil {
 		source.Close()
 		return nil, err
 	}
-	if err := source.attachAll(optional, false); err != nil {
+	if err := source.attachAll(optional, false, skippedSet); err != nil {
 		source.Close()
 		return nil, err
 	}
@@ -125,8 +126,13 @@ type probeSpec struct {
 	tracepointName  string
 }
 
-func (s *linuxEventSource) attachAll(specs []probeSpec, allowMissing bool) error {
+func (s *linuxEventSource) attachAll(specs []probeSpec, allowMissing bool, alreadySkipped map[string]struct{}) error {
 	for _, spec := range specs {
+		if alreadySkipped != nil {
+			if _, ok := alreadySkipped[spec.program]; ok {
+				continue
+			}
+		}
 		prog := s.collection.Programs[spec.program]
 		if prog == nil {
 			if spec.optional || allowMissing {
@@ -230,6 +236,8 @@ func loadCollectionWithOptionalPrograms(spec *ebpf.CollectionSpec, optional []pr
 		return collection, nil, nil
 	}
 
+	log.Printf("warning: initial BPF collection load failed: %v", err)
+
 	specCopy := spec.Copy()
 	var skipped []string
 	for _, probe := range optional {
@@ -242,6 +250,7 @@ func loadCollectionWithOptionalPrograms(spec *ebpf.CollectionSpec, optional []pr
 		return nil, nil, err
 	}
 
+	log.Printf("warning: retrying without optional programs: %s", strings.Join(skipped, ", "))
 	collection, retryErr := ebpf.NewCollection(specCopy)
 	if retryErr != nil {
 		return nil, nil, err

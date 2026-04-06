@@ -10,6 +10,7 @@ RUN apt-get update \
 WORKDIR /src
 
 COPY go.mod go.sum Makefile ./
+RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
