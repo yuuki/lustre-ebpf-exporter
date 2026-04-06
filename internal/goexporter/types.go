@@ -40,6 +40,28 @@ const (
 	OpRmdir      = "rmdir"
 )
 
+const (
+	MetricAccessOps       = "lustre.client.access.operations"
+	MetricAccessDuration  = "lustre.client.access.duration"
+	MetricDataBytes       = "lustre.client.data.bytes"
+	MetricRPCWaitOps      = "lustre.client.rpc.wait.operations"
+	MetricRPCWaitDuration = "lustre.client.rpc.wait.duration"
+	MetricInflight        = "lustre.client.inflight.requests"
+)
+
+const (
+	AttrUserID       = "user.id"
+	AttrUserName     = "user.name"
+	AttrProcessName  = "process.name"
+	AttrActorType    = "lustre.actor.type"
+	AttrAccessIntent = "lustre.access.intent"
+	AttrAccessOp     = "lustre.access.op"
+	AttrMountPath    = "lustre.mount.path"
+	AttrFSName       = "lustre.fs.name"
+)
+
+const MaxHistogramSamples = 10_000
+
 var (
 	IntentForOp = map[string]string{
 		OpLookup: "namespace_read", OpOpen: "namespace_read",
