@@ -123,14 +123,14 @@ struct counter_val {
 
 struct {
   __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
-  __uint(max_entries, 16384);
+  __uint(max_entries, 2048);
   __type(key, struct agg_key);
   __type(value, struct counter_val);
 } llite_counters SEC(".maps");
 
 struct {
   __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
-  __uint(max_entries, 4096);
+  __uint(max_entries, 2048);
   __type(key, struct agg_key);
   __type(value, struct counter_val);
 } rpc_counters SEC(".maps");
