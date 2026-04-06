@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -41,7 +42,7 @@ func main() {
 	cfg.Window = time.Duration(windowSeconds) * time.Second
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
 
-	ctx, stop := goexporter.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := goexporter.Run(ctx, cfg); err != nil {

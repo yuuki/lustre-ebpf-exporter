@@ -4,17 +4,12 @@ import (
 	"context"
 	"log"
 	"os"
-	"os/signal"
 	"time"
 )
 
 type EventSource interface {
 	Events() <-chan Event
 	Close() error
-}
-
-func NotifyContext(parent context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(parent, signals...)
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -40,6 +35,14 @@ func Run(ctx context.Context, cfg Config) error {
 	defer ticker.Stop()
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
+	flush := func(reason string) {
+		metrics := aggregator.Collect()
+		if debugEnabled {
+			log.Printf("debug: flushing %d metrics on %s", len(metrics), reason)
+		}
+		exporter.Export(metrics)
+	}
+
 	var durationTimer <-chan time.Time
 	if cfg.Duration > 0 {
 		timer := time.NewTimer(cfg.Duration)
@@ -50,35 +53,19 @@ func Run(ctx context.Context, cfg Config) error {
 	for {
 		select {
 		case <-ctx.Done():
-			metrics := aggregator.Collect()
-			if debugEnabled {
-				log.Printf("debug: flushing %d metrics on context cancellation", len(metrics))
-			}
-			exporter.Export(metrics)
+			flush("context cancellation")
 			return nil
 		case <-durationTimer:
-			metrics := aggregator.Collect()
-			if debugEnabled {
-				log.Printf("debug: flushing %d metrics on duration timeout", len(metrics))
-			}
-			exporter.Export(metrics)
+			flush("duration timeout")
 			return nil
 		case <-ticker.C:
-			metrics := aggregator.Collect()
-			if debugEnabled {
-				log.Printf("debug: flushing %d metrics on ticker", len(metrics))
-			}
-			exporter.Export(metrics)
+			flush("ticker")
 			if cfg.Once {
 				return nil
 			}
 		case event, ok := <-source.Events():
 			if !ok {
-				metrics := aggregator.Collect()
-				if debugEnabled {
-					log.Printf("debug: flushing %d metrics on source close", len(metrics))
-				}
-				exporter.Export(metrics)
+				flush("source close")
 				return nil
 			}
 			if debugEnabled {
