@@ -95,19 +95,14 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver) {
-	uid := strconv.FormatUint(uint64(event.UID), 10)
-	username := resolver.Resolve(event.UID)
-	actorType := ClassifyActorType(event.Comm)
-
 	if event.Plane == PlaneLLite {
 		intent := AccessIntentForOp(event.Op)
-		if intent == "" {
+		if intent == "" || event.DurationUS == 0 {
 			return
 		}
-		if event.DurationUS > 0 {
-			labels := BuildLLitePrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, intent, event.Op)
-			exporter.AccessLatency.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
-		}
+		uid, username, actorType := resolveEventIdentity(event, resolver)
+		labels := BuildLLitePrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, intent, event.Op)
+		exporter.AccessLatency.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
 		return
 	}
 
@@ -117,6 +112,7 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 
 	if event.Op == OpQueueWait {
 		if event.DurationUS > 0 {
+			uid, username, actorType := resolveEventIdentity(event, resolver)
 			labels := BuildPtlRPCPrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, event.Op)
 			exporter.RPCWaitLat.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
 		}
@@ -129,4 +125,11 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 	case OpFreeReq:
 		inflight.Update(-1, event)
 	}
+}
+
+func resolveEventIdentity(event Event, resolver *UsernameResolver) (uid, username, actorType string) {
+	uid = strconv.FormatUint(uint64(event.UID), 10)
+	username = resolver.Resolve(event.UID)
+	actorType = ClassifyActorType(event.Comm)
+	return
 }

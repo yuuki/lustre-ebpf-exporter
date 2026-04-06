@@ -16,7 +16,7 @@ import (
 // reads and deletes BPF map entries, accumulating them in a Go-side map.
 // At scrape time, Collect() returns the accumulated values.
 type BPFCounterCollector struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	lliteMap   *ebpf.Map
 	rpcMap     *ebpf.Map
 	mountInfos []MountInfo
@@ -69,8 +69,8 @@ func (c *BPFCounterCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements prometheus.Collector. Called at scrape time.
 func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	for _, acc := range c.accumulated {
 		if _, hasIntent := acc.labels["access_intent"]; hasIntent {

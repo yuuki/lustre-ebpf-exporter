@@ -41,28 +41,6 @@ const (
 )
 
 const (
-	MetricAccessOps       = "lustre.client.access.operations"
-	MetricAccessDuration  = "lustre.client.access.duration"
-	MetricDataBytes       = "lustre.client.data.bytes"
-	MetricRPCWaitOps      = "lustre.client.rpc.wait.operations"
-	MetricRPCWaitDuration = "lustre.client.rpc.wait.duration"
-	MetricInflight        = "lustre.client.inflight.requests"
-)
-
-const (
-	AttrUserID       = "user.id"
-	AttrUserName     = "user.name"
-	AttrProcessName  = "process.name"
-	AttrActorType    = "lustre.actor.type"
-	AttrAccessIntent = "lustre.access.intent"
-	AttrAccessOp     = "lustre.access.op"
-	AttrMountPath    = "lustre.mount.path"
-	AttrFSName       = "lustre.fs.name"
-)
-
-const DefaultDrainInterval = 5 * time.Second
-
-const (
 	ActorUser         = "user"
 	ActorClientWorker = "client_worker"
 	ActorBatchJob     = "batch_job"
@@ -184,15 +162,6 @@ type Event struct {
 	RequestPtr uint64
 	MountPath  string
 	FSName     string
-}
-
-type AggregatedMetric struct {
-	Name       string
-	Type       string
-	Unit       string
-	Value      float64
-	Histogram  []float64
-	Attributes map[string]string
 }
 
 type MountInfo struct {

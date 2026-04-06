@@ -109,15 +109,3 @@ func BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsNa
 		"actor_type": actorType,
 	}
 }
-
-// buildCoreAttrs builds OTel-style attribute maps (used by BPFCounterCollector).
-func buildCoreAttrs(uid, username, comm, actorType, mountPath, fsName string) map[string]string {
-	return map[string]string{
-		AttrUserID:      uid,
-		AttrUserName:    username,
-		AttrProcessName: comm,
-		AttrActorType:   actorType,
-		AttrMountPath:   mountPath,
-		AttrFSName:      fsName,
-	}
-}
