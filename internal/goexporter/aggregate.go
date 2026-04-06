@@ -9,12 +9,14 @@ import (
 type Aggregator struct {
 	counters   map[string]float64
 	histograms map[string][]float64
+	inflight   map[string]float64 // persistent gauge, not reset on Collect
 }
 
 func NewAggregator() *Aggregator {
 	return &Aggregator{
 		counters:   map[string]float64{},
 		histograms: map[string][]float64{},
+		inflight:   map[string]float64{},
 	}
 }
 
@@ -73,9 +75,9 @@ func (a *Aggregator) Consume(event Event) {
 	}
 	switch event.Op {
 	case OpSendNewReq:
-		a.addCounter("lustre.client.inflight.requests", 1, attrs)
+		a.updateInflight(1, attrs)
 	case OpFreeReq:
-		a.addCounter("lustre.client.inflight.requests", -1, attrs)
+		a.updateInflight(-1, attrs)
 	}
 }
 
@@ -89,19 +91,31 @@ func (a *Aggregator) Collect() []AggregatedMetric {
 	sort.Strings(counterKeys)
 	for _, key := range counterKeys {
 		name, attrs := splitMetricKey(key)
-		metricType := "counter"
-		if name == "lustre.client.inflight.requests" {
-			metricType = "updowncounter"
-		}
 		unit := "1"
 		if name == "lustre.client.data.bytes" {
 			unit = "By"
 		}
 		metrics = append(metrics, AggregatedMetric{
 			Name:       name,
-			Type:       metricType,
+			Type:       "counter",
 			Unit:       unit,
 			Value:      a.counters[key],
+			Attributes: attrs,
+		})
+	}
+
+	inflightKeys := make([]string, 0, len(a.inflight))
+	for key := range a.inflight {
+		inflightKeys = append(inflightKeys, key)
+	}
+	sort.Strings(inflightKeys)
+	for _, key := range inflightKeys {
+		_, attrs := splitMetricKey(key)
+		metrics = append(metrics, AggregatedMetric{
+			Name:       "lustre.client.inflight.requests",
+			Type:       "gauge",
+			Unit:       "1",
+			Value:      a.inflight[key],
 			Attributes: attrs,
 		})
 	}
@@ -131,6 +145,14 @@ func (a *Aggregator) Collect() []AggregatedMetric {
 func (a *Aggregator) addCounter(name string, value float64, attrs map[string]string) {
 	key := buildMetricKey(name, attrs)
 	a.counters[key] += value
+}
+
+func (a *Aggregator) updateInflight(delta float64, attrs map[string]string) {
+	key := buildMetricKey("lustre.client.inflight.requests", attrs)
+	a.inflight[key] += delta
+	if a.inflight[key] < 0 {
+		a.inflight[key] = 0
+	}
 }
 
 func (a *Aggregator) addHistogram(name string, value float64, attrs map[string]string) {

@@ -94,7 +94,7 @@ func (e *PrometheusExporter) Export(metrics []AggregatedMetric) {
 				observer.Observe(value / 1_000_000.0)
 			}
 		case "lustre.client.inflight.requests":
-			e.inflight.With(e.labels(metric)).Add(metric.Value)
+			e.inflight.With(e.labels(metric)).Set(metric.Value)
 		}
 	}
 }

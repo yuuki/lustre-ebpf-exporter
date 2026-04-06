@@ -116,6 +116,58 @@ func TestAggregatorSkipsZeroValuedLlIteDurationAndBytes(t *testing.T) {
 	}
 }
 
+func TestAggregatorInflightClampsAtZero(t *testing.T) {
+	t.Parallel()
+
+	aggregator := NewAggregator()
+	// free_req without prior send_new_req (simulates exporter starting mid-flight)
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+
+	metrics := aggregator.Collect()
+	for _, metric := range metrics {
+		if metric.Name == "lustre.client.inflight.requests" {
+			if metric.Value < 0 {
+				t.Fatalf("inflight went negative: %f", metric.Value)
+			}
+			return
+		}
+	}
+	t.Fatal("missing inflight metric")
+}
+
+func TestAggregatorInflightPersistsAcrossCollect(t *testing.T) {
+	t.Parallel()
+
+	aggregator := NewAggregator()
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+
+	// First Collect: inflight should be 2
+	metrics := aggregator.Collect()
+	var val float64
+	for _, m := range metrics {
+		if m.Name == "lustre.client.inflight.requests" {
+			val = m.Value
+		}
+	}
+	if val != 2 {
+		t.Fatalf("expected inflight=2 after first collect, got %f", val)
+	}
+
+	// free one request, then Collect again: should be 1
+	aggregator.Consume(Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"})
+	metrics = aggregator.Collect()
+	for _, m := range metrics {
+		if m.Name == "lustre.client.inflight.requests" {
+			val = m.Value
+		}
+	}
+	if val != 1 {
+		t.Fatalf("expected inflight=1 after second collect, got %f", val)
+	}
+}
+
 func TestSanitizeCommTrimsLeadingAndTrailingNulls(t *testing.T) {
 	t.Parallel()
 
