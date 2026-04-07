@@ -294,24 +294,6 @@ func TestResolverEvictionAtCapacity(t *testing.T) {
 	}
 }
 
-func TestResolverInvalidate(t *testing.T) {
-	t.Parallel()
-
-	fs := &fakeFS{
-		stat:    statBlob(100),
-		environ: []byte("SLURM_JOB_ID=42\x00"),
-	}
-	r := newResolver(fs, Options{VerifyTTL: time.Hour})
-
-	r.Resolve(123)
-	r.Invalidate(123)
-	r.Resolve(123)
-
-	if fs.statCalls.Load() != 2 {
-		t.Fatalf("expected invalidate to cause a refetch, got %d stat calls", fs.statCalls.Load())
-	}
-}
-
 func TestResolverEnabledReportsState(t *testing.T) {
 	t.Parallel()
 

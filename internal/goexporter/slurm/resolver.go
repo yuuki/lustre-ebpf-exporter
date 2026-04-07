@@ -88,16 +88,6 @@ func New(opts Options) *Resolver {
 // Enabled reports whether the resolver actually performs lookups.
 func (r *Resolver) Enabled() bool { return r != nil && r.opts.Enabled }
 
-// Invalidate drops the cached entry for pid if present.
-func (r *Resolver) Invalidate(pid uint32) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	delete(r.entries, pid)
-	r.mu.Unlock()
-}
-
 // Resolve returns the Slurm context for pid. It never blocks on IO-heavy
 // work that is not bounded: the slow path reads up to three small /proc
 // files once. All failures collapse to JobInfo{}.
