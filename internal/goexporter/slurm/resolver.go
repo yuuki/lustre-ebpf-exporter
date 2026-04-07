@@ -116,7 +116,7 @@ func (r *Resolver) Resolve(pid uint32) JobInfo {
 		// event for this pid may come with different conditions.
 		return JobInfo{}
 	}
-	start, err := parseProcStatStarttime(statRaw)
+	start, err := ParseProcStatStarttime(statRaw)
 	if err != nil {
 		return JobInfo{}
 	}

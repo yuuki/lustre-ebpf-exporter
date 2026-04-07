@@ -19,7 +19,9 @@ import (
 //	22: starttime
 //
 // Post-')' tokens correspond to fields 3..N, so starttime is index 19.
-func parseProcStatStarttime(raw []byte) (uint64, error) {
+// ParseProcStatStarttime is exported so other packages (e.g. goexporter's
+// ProcNameResolver) can reuse the same pid-reuse detection logic.
+func ParseProcStatStarttime(raw []byte) (uint64, error) {
 	lastParen := bytes.LastIndexByte(raw, ')')
 	if lastParen < 0 {
 		return 0, fmt.Errorf("slurm: /proc/<pid>/stat missing ')'")

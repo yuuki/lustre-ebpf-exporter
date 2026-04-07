@@ -36,7 +36,7 @@ func TestParseProcStatStarttime(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseProcStatStarttime([]byte(tc.raw))
+			got, err := ParseProcStatStarttime([]byte(tc.raw))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -61,7 +61,7 @@ func TestParseProcStatStarttimeErrors(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := parseProcStatStarttime([]byte(tc.raw))
+			_, err := ParseProcStatStarttime([]byte(tc.raw))
 			if err == nil {
 				t.Fatalf("expected error, got nil")
 			}
