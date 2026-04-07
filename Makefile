@@ -6,6 +6,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS ?= -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 BPF_CLANG ?= clang
+BPF2GO_STRIP ?= $(shell command -v llvm-strip 2>/dev/null || echo /opt/homebrew/opt/llvm/bin/llvm-strip)
 BPF2GO ?= $(GO) run github.com/cilium/ebpf/cmd/bpf2go
 ifeq ($(GOARCH),amd64)
 BPF_TARGET_ARCH ?= x86
@@ -20,7 +21,14 @@ DOCKERFILE_GO_EXPORTER ?= build/docker/go-exporter.Dockerfile
 
 .PHONY: generate-go-exporter
 generate-go-exporter:
-	cd internal/bpf && $(BPF2GO) -cc $(BPF_CLANG) -target $(GOARCH) -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- $(BPF_CFLAGS)
+	cd internal/bpf && $(BPF2GO) -cc $(BPF_CLANG) -strip $(BPF2GO_STRIP) -target $(GOARCH) -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- $(BPF_CFLAGS)
+
+# docker-generate-go-exporter: run BPF codegen inside Docker (use this on macOS)
+.PHONY: docker-generate-go-exporter
+docker-generate-go-exporter:
+	docker build -f $(DOCKERFILE_GO_EXPORTER) --target codegen -t lustre-ebpf-exporter-codegen .
+	docker run --rm -v $(CURDIR)/internal/bpf:/out lustre-ebpf-exporter-codegen \
+		sh -c 'cp /src/internal/bpf/lustreebpfexporter_*.go /src/internal/bpf/lustreebpfexporter_*.o /out/'
 
 .PHONY: build-go-exporter
 build-go-exporter:

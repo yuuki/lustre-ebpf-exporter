@@ -453,7 +453,6 @@ int ptlrpc_send_new_req_enter(struct pt_regs *ctx) {
   __u8 mount_idx = *midx;
   fill_start_info(&info, req_ptr);
   info.mount_idx = mount_idx;
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
   bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &mount_idx, BPF_ANY);
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr);
   return 0;
@@ -469,7 +468,6 @@ int ptlrpc_queue_wait_enter(struct pt_regs *ctx) {
   __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
   if (selected) {
     mount_idx = *selected;
-    bpf_map_delete_elem(&selected_mount_tids, &tid);
   } else {
     __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
     if (!tracked) {
