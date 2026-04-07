@@ -1,7 +1,6 @@
 package goexporter
 
 import (
-	"strconv"
 	"strings"
 	"sync"
 
@@ -32,11 +31,7 @@ func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, 
 // Update adjusts the inflight count for the given event by delta (+1 or -1),
 // clamps at zero, and updates the Prometheus gauge.
 func (t *InflightTracker) Update(delta float64, event Event) {
-	uid := strconv.FormatUint(uint64(event.UID), 10)
-	username := t.resolver.Resolve(event.UID)
-	actorType := ClassifyActorType(event.Comm)
-	slurmJobID := t.slurm.Resolve(event.PID).JobID
-
+	uid, username, actorType, slurmJobID := resolveEventIdentity(event, t.resolver, t.slurm)
 	key := baseLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
 
 	t.mu.Lock()
@@ -61,10 +56,8 @@ func (t *InflightTracker) Update(delta float64, event Event) {
 // long as every call site uses the same arity.
 const labelKeySep = "\x00"
 
-// baseLabelKey builds a cache key from the base label values in the
-// order declared by baseLabels (see prometheus.go).
+// baseLabelKey joins the base label values in baseLabels order (see prometheus.go).
 func baseLabelKey(fs, mount, uid, username, process, actorType, slurmJobID string) string {
-	// Pre-size the builder so the key string is allocated exactly once.
 	total := len(fs) + len(mount) + len(uid) + len(username) + len(process) + len(actorType) + len(slurmJobID) + 6
 	var b strings.Builder
 	b.Grow(total)
