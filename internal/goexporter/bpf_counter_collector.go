@@ -148,7 +148,11 @@ func (c *BPFCounterCollector) DrainOnce() {
 	}
 }
 
-func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
+// drainCounterMap iterates a BPF counter map, invokes onEntry for each
+// (key, per-cpu-summed total), and then deletes every visited key. The
+// per-entry work — label extraction and accumulator update — is specific
+// to each plane and lives in the callback.
+func drainCounterMap(m *ebpf.Map, onEntry func(key bpfAggKey, total bpfCounterVal)) {
 	var keysToDelete []bpfAggKey
 	var key bpfAggKey
 	var values []bpfCounterVal
@@ -159,7 +163,22 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 			total.OpsCount += v.OpsCount
 			total.BytesSum += v.BytesSum
 		}
+		onEntry(key, total)
+		keyCopy := key
+		keysToDelete = append(keysToDelete, keyCopy)
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("warning: BPF counter map iteration error: %v", err)
+	}
+	for i := range keysToDelete {
+		if err := m.Delete(&keysToDelete[i]); err != nil {
+			log.Printf("warning: BPF counter map delete error: %v", err)
+		}
+	}
+}
 
+func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
+	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
 		const slurmJobID = ""
@@ -183,32 +202,11 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 		}
 		acc.opsCount += float64(total.OpsCount)
 		acc.bytesSum += float64(total.BytesSum)
-
-		keyCopy := key
-		keysToDelete = append(keysToDelete, keyCopy)
-	}
-	if err := iter.Err(); err != nil {
-		log.Printf("warning: BPF counter map iteration error: %v", err)
-	}
-
-	for i := range keysToDelete {
-		if err := m.Delete(&keysToDelete[i]); err != nil {
-			log.Printf("warning: BPF counter map delete error: %v", err)
-		}
-	}
+	})
 }
 
 func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
-	var keysToDelete []bpfAggKey
-	var key bpfAggKey
-	var values []bpfCounterVal
-	iter := m.Iterate()
-	for iter.Next(&key, &values) {
-		var total bpfCounterVal
-		for _, v := range values {
-			total.OpsCount += v.OpsCount
-		}
-
+	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
 		vals := [8]string{
@@ -229,19 +227,7 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 			c.rpcAcc[accKey] = acc
 		}
 		acc.opsCount += float64(total.OpsCount)
-
-		keyCopy := key
-		keysToDelete = append(keysToDelete, keyCopy)
-	}
-	if err := iter.Err(); err != nil {
-		log.Printf("warning: BPF counter map iteration error: %v", err)
-	}
-
-	for i := range keysToDelete {
-		if err := m.Delete(&keysToDelete[i]); err != nil {
-			log.Printf("warning: BPF counter map delete error: %v", err)
-		}
-	}
+	})
 }
 
 func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
