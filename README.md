@@ -28,7 +28,7 @@ What works today:
 
 - Mount-scoped observation of llite entry activity.
 - Per-user and per-process aggregation.
-- Actor classification as `user`, `worker`, or `daemon`.
+- Actor classification as `user`, `batch_job`, `system_daemon`, or `client_worker`.
 - Prometheus export from both implementations.
 - Lima-based E2E coverage for the Go exporter and the legacy Python path.
 
@@ -50,22 +50,27 @@ The design intentionally separates two planes:
 
 1. `llite`
    This is the user-facing workload plane. It answers who touched Lustre and which operation class
-   they requested.
+   they requested. Observed via kprobes on `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`,
+   `ll_file_write_iter`, and `ll_fsync`.
 
 2. `PtlRPC`
    This is the client-internal impact plane. It answers how much RPC wait occurred inside the
    Lustre client.
 
-The implementation also classifies operations into:
+The `access_intent` label classifies operations into:
 
-- `metadata`: `lookup`, `open`, `rename`, `unlink`, `mkdir`, `rmdir`
-- `data`: `read`, `write`, `fsync`
+- `namespace_read`: `lookup`
+- `namespace_mutation`: `open` (create path)
+- `data_read`: `read`
+- `data_write`: `write`
+- `sync`: `fsync`
 
-And it classifies actors into:
+And actors are classified into:
 
-- `user`
-- `worker` for `ptlrpcd_*`
-- `daemon` for known system daemons and `*exporter`
+- `user`: regular interactive or scripted processes
+- `batch_job`: processes launched by Slurm, PBS, SGE, or LSF
+- `system_daemon`: known system daemons and `*exporter` processes
+- `client_worker`: `ptlrpcd_*` Lustre internal threads
 
 ## Repository Layout
 
@@ -114,12 +119,14 @@ Common labels are:
 - `fs`
 - `mount`
 - `uid`
+- `username`
 - `process`
 - `actor_type`
+- `slurm_job_id`
 
 Additional labels by family:
 
-- llite workload metrics also use `access_class` and `op`
+- llite workload metrics also use `access_intent` and `op`
 - RPC wait metrics also use `op`
 
 Label cardinality is intentionally constrained:
@@ -164,14 +171,13 @@ This produces:
 - `dist/linux-amd64/lustre-ebpf-exporter`
 - `dist/linux-amd64/lustre_ebpf_exporter.bpf.o`
 
-Run the exporter:
+Run the exporter (mount paths are auto-detected if `--mount` is omitted):
 
 ```bash
 sudo ./dist/linux-amd64/lustre-ebpf-exporter \
   --mount /mnt/lustre \
   --web.listen-address :9108 \
-  --web.telemetry-path /metrics \
-  --bpf-object ./dist/linux-amd64/lustre_ebpf_exporter.bpf.o
+  --web.telemetry-path /metrics
 ```
 
 Then scrape:
@@ -182,14 +188,16 @@ curl http://127.0.0.1:9108/metrics
 
 Useful flags:
 
-- `--mount`
-- `--window-seconds`
+- `--mount` (repeatable; auto-detected from `/proc/mounts` when omitted)
+- `--drain-interval` (BPF counter map drain interval in seconds; default 5)
 - `--duration`
 - `--once`
-- `--bpf-object`
 - `--legacy-symbol-allow-missing`
+- `--slurm-jobid` (enable Slurm job id resolution per pid)
+- `--slurm-jobid-ttl`, `--slurm-jobid-negative-ttl`, `--slurm-jobid-verify-ttl`, `--slurm-jobid-cache-size`
 - `--web.listen-address`
 - `--web.telemetry-path`
+- `--version`
 
 The exporter follows the standard Prometheus exporter flag style for `--web.listen-address`
 and `--web.telemetry-path`.
