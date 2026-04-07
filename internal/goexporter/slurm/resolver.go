@@ -109,8 +109,8 @@ func (r *Resolver) Resolve(pid uint32) JobInfo {
 	r.mu.Unlock()
 
 	// Slow path: read starttime, compare against cached value.
-	statPath := "/proc/" + strconv.FormatUint(uint64(pid), 10) + "/stat"
-	statRaw, err := r.opts.ReadStat(statPath)
+	pidStr := strconv.FormatUint(uint64(pid), 10)
+	statRaw, err := r.opts.ReadStat("/proc/" + pidStr + "/stat")
 	if err != nil {
 		// Process gone or inaccessible. Do not poison the cache; a new
 		// event for this pid may come with different conditions.
@@ -136,15 +136,13 @@ func (r *Resolver) Resolve(pid uint32) JobInfo {
 
 	// Fetch: environ -> cgroup -> empty.
 	info := JobInfo{}
-	environPath := "/proc/" + strconv.FormatUint(uint64(pid), 10) + "/environ"
-	if raw, err := r.opts.ReadEnviron(environPath); err == nil {
+	if raw, err := r.opts.ReadEnviron("/proc/" + pidStr + "/environ"); err == nil {
 		if v, ok := parseSlurmJobIDFromEnviron(raw); ok {
 			info.JobID = v
 		}
 	}
 	if info.JobID == "" {
-		cgroupPath := "/proc/" + strconv.FormatUint(uint64(pid), 10) + "/cgroup"
-		if raw, err := r.opts.ReadCgroup(cgroupPath); err == nil {
+		if raw, err := r.opts.ReadCgroup("/proc/" + pidStr + "/cgroup"); err == nil {
 			if v, ok := parseSlurmJobIDFromCgroup(raw); ok {
 				info.JobID = v
 			}
