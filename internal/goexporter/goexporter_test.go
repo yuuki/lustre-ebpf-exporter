@@ -276,9 +276,8 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 	tracker.Update(-1, event)
 	tracker.Update(-1, event)
 
-	// Verify the gauge never goes negative
-	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs", "")
-	metric := gauge.With(labels)
+	// Verify the gauge never goes negative. Positional order matches baseLabels.
+	metric := gauge.WithLabelValues("lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", "")
 	dto := readGaugeValue(t, metric)
 	if dto < 0 {
 		t.Fatalf("inflight went negative: %f", dto)
@@ -300,15 +299,15 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 	tracker.Update(+1, event)
 	tracker.Update(+1, event)
 
-	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs", "")
-	val := readGaugeValue(t, gauge.With(labels))
+	metric := gauge.WithLabelValues("lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", "")
+	val := readGaugeValue(t, metric)
 	if val != 2 {
 		t.Fatalf("expected inflight=2, got %f", val)
 	}
 
 	// free one request
 	tracker.Update(-1, event)
-	val = readGaugeValue(t, gauge.With(labels))
+	val = readGaugeValue(t, metric)
 	if val != 1 {
 		t.Fatalf("expected inflight=1, got %f", val)
 	}

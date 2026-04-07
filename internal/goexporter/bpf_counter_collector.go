@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +16,8 @@ import (
 
 // BPFCounterCollector reads aggregated counters from BPF PERCPU_HASH maps
 // and implements prometheus.Collector. A background drain goroutine periodically
-// reads and deletes BPF map entries, accumulating them in a Go-side map.
-// At scrape time, Collect() returns the accumulated values.
+// reads and deletes BPF map entries, accumulating them in Go-side maps.
+// At scrape time, Collect() emits the accumulated values.
 type BPFCounterCollector struct {
 	mu         sync.RWMutex
 	lliteMap   *ebpf.Map
@@ -31,17 +32,27 @@ type BPFCounterCollector struct {
 	// pid->jobid mapping into a BPF LRU map and include job_id in agg_key.
 	slurmResolver *slurm.Resolver
 
-	accumulated map[string]*accumulatedCounter
+	lliteAcc map[string]*lliteAccum
+	rpcAcc   map[string]*rpcAccum
 
 	accessOpsDesc  *prometheus.Desc
 	dataBytesDesc  *prometheus.Desc
 	rpcWaitOpsDesc *prometheus.Desc
 }
 
-type accumulatedCounter struct {
+// lliteAccum stores label values in lliteLabels order:
+// fs, mount, access_intent, op, uid, username, process, actor_type, slurm_job_id.
+type lliteAccum struct {
 	opsCount float64
 	bytesSum float64
-	labels   prometheus.Labels
+	values   [9]string
+}
+
+// rpcAccum stores label values in ptlrpcLabels order:
+// fs, mount, op, uid, username, process, actor_type, slurm_job_id.
+type rpcAccum struct {
+	opsCount float64
+	values   [8]string
 }
 
 func NewBPFCounterCollector(lliteMap, rpcMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *BPFCounterCollector {
@@ -51,7 +62,8 @@ func NewBPFCounterCollector(lliteMap, rpcMap *ebpf.Map, mountInfos []MountInfo, 
 		mountInfos:    mountInfos,
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
-		accumulated:   map[string]*accumulatedCounter{},
+		lliteAcc:      map[string]*lliteAccum{},
+		rpcAcc:        map[string]*rpcAccum{},
 		accessOpsDesc: prometheus.NewDesc(
 			"lustre_client_access_operations_total",
 			"Aggregated llite access operation count",
@@ -82,35 +94,26 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	for _, acc := range c.accumulated {
-		if _, hasIntent := acc.labels["access_intent"]; hasIntent {
-			// llite metrics
-			if acc.opsCount > 0 {
-				ch <- prometheus.MustNewConstMetric(
-					c.accessOpsDesc, prometheus.CounterValue, acc.opsCount,
-					acc.labels["fs"], acc.labels["mount"], acc.labels["access_intent"], acc.labels["op"],
-					acc.labels["uid"], acc.labels["username"], acc.labels["process"], acc.labels["actor_type"],
-					acc.labels["slurm_job_id"],
-				)
-			}
-			if acc.bytesSum > 0 {
-				ch <- prometheus.MustNewConstMetric(
-					c.dataBytesDesc, prometheus.CounterValue, acc.bytesSum,
-					acc.labels["fs"], acc.labels["mount"], acc.labels["access_intent"], acc.labels["op"],
-					acc.labels["uid"], acc.labels["username"], acc.labels["process"], acc.labels["actor_type"],
-					acc.labels["slurm_job_id"],
-				)
-			}
-		} else {
-			// ptlrpc metrics
-			if acc.opsCount > 0 {
-				ch <- prometheus.MustNewConstMetric(
-					c.rpcWaitOpsDesc, prometheus.CounterValue, acc.opsCount,
-					acc.labels["fs"], acc.labels["mount"], acc.labels["op"],
-					acc.labels["uid"], acc.labels["username"], acc.labels["process"], acc.labels["actor_type"],
-					acc.labels["slurm_job_id"],
-				)
-			}
+	for _, acc := range c.lliteAcc {
+		if acc.opsCount > 0 {
+			ch <- prometheus.MustNewConstMetric(
+				c.accessOpsDesc, prometheus.CounterValue, acc.opsCount,
+				acc.values[:]...,
+			)
+		}
+		if acc.bytesSum > 0 {
+			ch <- prometheus.MustNewConstMetric(
+				c.dataBytesDesc, prometheus.CounterValue, acc.bytesSum,
+				acc.values[:]...,
+			)
+		}
+	}
+	for _, acc := range c.rpcAcc {
+		if acc.opsCount > 0 {
+			ch <- prometheus.MustNewConstMetric(
+				c.rpcWaitOpsDesc, prometheus.CounterValue, acc.opsCount,
+				acc.values[:]...,
+			)
 		}
 	}
 }
@@ -138,16 +141,15 @@ func (c *BPFCounterCollector) DrainOnce() {
 	defer c.mu.Unlock()
 
 	if c.lliteMap != nil {
-		c.drainMap(c.lliteMap, true)
+		c.drainLLite(c.lliteMap)
 	}
 	if c.rpcMap != nil {
-		c.drainMap(c.rpcMap, false)
+		c.drainRPC(c.rpcMap)
 	}
 }
 
-func (c *BPFCounterCollector) drainMap(m *ebpf.Map, isLLite bool) {
+func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 	var keysToDelete []bpfAggKey
-
 	var key bpfAggKey
 	var values []bpfCounterVal
 	iter := m.Iterate()
@@ -158,18 +160,29 @@ func (c *BPFCounterCollector) drainMap(m *ebpf.Map, isLLite bool) {
 			total.BytesSum += v.BytesSum
 		}
 
-		labels := c.buildLabels(key, isLLite)
-		accKey := labelsKey(labels)
+		mountPath, fsName := c.mountLabel(key.MountIdx)
+		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
+		const slurmJobID = ""
+		vals := [9]string{
+			fsName,
+			mountPath,
+			intentName(key.Intent),
+			rawOpToName(key.Op),
+			strconv.FormatUint(uint64(key.UID), 10),
+			c.resolver.Resolve(key.UID),
+			sanitizeComm(key.Comm[:]),
+			actorTypeName(key.ActorType),
+			slurmJobID,
+		}
+		accKey := strings.Join(vals[:], labelKeySep)
 
-		acc, ok := c.accumulated[accKey]
+		acc, ok := c.lliteAcc[accKey]
 		if !ok {
-			acc = &accumulatedCounter{labels: labels}
-			c.accumulated[accKey] = acc
+			acc = &lliteAccum{values: vals}
+			c.lliteAcc[accKey] = acc
 		}
 		acc.opsCount += float64(total.OpsCount)
-		if isLLite {
-			acc.bytesSum += float64(total.BytesSum)
-		}
+		acc.bytesSum += float64(total.BytesSum)
 
 		keyCopy := key
 		keysToDelete = append(keysToDelete, keyCopy)
@@ -185,32 +198,58 @@ func (c *BPFCounterCollector) drainMap(m *ebpf.Map, isLLite bool) {
 	}
 }
 
-func (c *BPFCounterCollector) buildLabels(key bpfAggKey, isLLite bool) prometheus.Labels {
-	mountPath := ""
-	fsName := ""
-	if int(key.MountIdx) < len(c.mountInfos) {
-		mi := c.mountInfos[key.MountIdx]
-		mountPath = mi.Path
-		fsName = mi.FSName
+func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
+	var keysToDelete []bpfAggKey
+	var key bpfAggKey
+	var values []bpfCounterVal
+	iter := m.Iterate()
+	for iter.Next(&key, &values) {
+		var total bpfCounterVal
+		for _, v := range values {
+			total.OpsCount += v.OpsCount
+		}
+
+		mountPath, fsName := c.mountLabel(key.MountIdx)
+		const slurmJobID = ""
+		vals := [8]string{
+			fsName,
+			mountPath,
+			rawOpToName(key.Op),
+			strconv.FormatUint(uint64(key.UID), 10),
+			c.resolver.Resolve(key.UID),
+			sanitizeComm(key.Comm[:]),
+			actorTypeName(key.ActorType),
+			slurmJobID,
+		}
+		accKey := strings.Join(vals[:], labelKeySep)
+
+		acc, ok := c.rpcAcc[accKey]
+		if !ok {
+			acc = &rpcAccum{values: vals}
+			c.rpcAcc[accKey] = acc
+		}
+		acc.opsCount += float64(total.OpsCount)
+
+		keyCopy := key
+		keysToDelete = append(keysToDelete, keyCopy)
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("warning: BPF counter map iteration error: %v", err)
 	}
 
-	uid := strconv.FormatUint(uint64(key.UID), 10)
-	username := c.resolver.Resolve(key.UID)
-	comm := sanitizeComm(key.Comm[:])
-	actorType := actorTypeName(key.ActorType)
-
-	// slurm_job_id is always empty for counters. See BPFCounterCollector
-	// doc for rationale (agg_key has no pid, so we cannot resolve it here).
-	const slurmJobID = ""
-
-	if isLLite {
-		intent := intentName(key.Intent)
-		op := rawOpToName(key.Op)
-		return BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op, slurmJobID)
+	for i := range keysToDelete {
+		if err := m.Delete(&keysToDelete[i]); err != nil {
+			log.Printf("warning: BPF counter map delete error: %v", err)
+		}
 	}
+}
 
-	op := rawOpToName(key.Op)
-	return BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op, slurmJobID)
+func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
+	if int(idx) < len(c.mountInfos) {
+		mi := c.mountInfos[idx]
+		return mi.Path, mi.FSName
+	}
+	return "", ""
 }
 
 func rawOpToName(raw uint8) string {

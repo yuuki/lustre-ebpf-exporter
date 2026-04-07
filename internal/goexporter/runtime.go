@@ -104,8 +104,11 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 			return
 		}
 		uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
-		labels := BuildLLitePrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, intent, event.Op, slurmJobID)
-		exporter.AccessLatency.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
+		// Positional order must match lliteLabels in prometheus.go.
+		exporter.AccessLatency.WithLabelValues(
+			event.FSName, event.MountPath, intent, event.Op,
+			uid, username, event.Comm, actorType, slurmJobID,
+		).Observe(float64(event.DurationUS) / 1_000_000.0)
 		return
 	}
 
@@ -116,8 +119,11 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 	if event.Op == OpQueueWait {
 		if event.DurationUS > 0 {
 			uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
-			labels := BuildPtlRPCPrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, event.Op, slurmJobID)
-			exporter.RPCWaitLat.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
+			// Positional order must match ptlrpcLabels in prometheus.go.
+			exporter.RPCWaitLat.WithLabelValues(
+				event.FSName, event.MountPath, event.Op,
+				uid, username, event.Comm, actorType, slurmJobID,
+			).Observe(float64(event.DurationUS) / 1_000_000.0)
 		}
 		return
 	}

@@ -1,8 +1,6 @@
 package goexporter
 
 import (
-	"maps"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,8 +32,12 @@ func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, 
 // Update adjusts the inflight count for the given event by delta (+1 or -1),
 // clamps at zero, and updates the Prometheus gauge.
 func (t *InflightTracker) Update(delta float64, event Event) {
-	labels := t.buildBaseLabels(event)
-	key := labelsKey(labels)
+	uid := strconv.FormatUint(uint64(event.UID), 10)
+	username := t.resolver.Resolve(event.UID)
+	actorType := ClassifyActorType(event.Comm)
+	slurmJobID := t.slurm.Resolve(event.PID).JobID
+
+	key := baseLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
 
 	t.mu.Lock()
 	t.counts[key] += delta
@@ -48,72 +50,36 @@ func (t *InflightTracker) Update(delta float64, event Event) {
 	}
 	t.mu.Unlock()
 
-	t.gauge.With(labels).Set(val)
+	t.gauge.WithLabelValues(
+		event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID,
+	).Set(val)
 }
 
-func (t *InflightTracker) buildBaseLabels(event Event) prometheus.Labels {
-	return BuildBasePrometheusLabels(
-		strconv.FormatUint(uint64(event.UID), 10),
-		t.resolver.Resolve(event.UID),
-		event.Comm,
-		ClassifyActorType(event.Comm),
-		event.MountPath,
-		event.FSName,
-		t.slurm.Resolve(event.PID).JobID,
-	)
-}
+// labelKeySep is used to join positional label values into a cache key.
+// Null bytes cannot legitimately appear inside label values sourced from
+// /proc, sanitized comms, or numeric ids, so collisions are impossible as
+// long as every call site uses the same arity.
+const labelKeySep = "\x00"
 
-// labelsKey builds a deterministic string key from sorted label key-value pairs.
-func labelsKey(labels prometheus.Labels) string {
-	keys := slices.Sorted(maps.Keys(labels))
+// baseLabelKey builds a cache key from the base label values in the
+// order declared by baseLabels (see prometheus.go).
+func baseLabelKey(fs, mount, uid, username, process, actorType, slurmJobID string) string {
+	// Pre-size the builder so the key string is allocated exactly once.
+	total := len(fs) + len(mount) + len(uid) + len(username) + len(process) + len(actorType) + len(slurmJobID) + 6
 	var b strings.Builder
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte(0)
-		b.WriteString(labels[k])
-		b.WriteByte(0)
-	}
+	b.Grow(total)
+	b.WriteString(fs)
+	b.WriteString(labelKeySep)
+	b.WriteString(mount)
+	b.WriteString(labelKeySep)
+	b.WriteString(uid)
+	b.WriteString(labelKeySep)
+	b.WriteString(username)
+	b.WriteString(labelKeySep)
+	b.WriteString(process)
+	b.WriteString(labelKeySep)
+	b.WriteString(actorType)
+	b.WriteString(labelKeySep)
+	b.WriteString(slurmJobID)
 	return b.String()
-}
-
-// BuildBasePrometheusLabels creates the base label set used by all metric types.
-func BuildBasePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, slurmJobID string) prometheus.Labels {
-	return prometheus.Labels{
-		"fs":           fsName,
-		"mount":        mountPath,
-		"uid":          uid,
-		"username":     username,
-		"process":      comm,
-		"actor_type":   actorType,
-		"slurm_job_id": slurmJobID,
-	}
-}
-
-// BuildLLitePrometheusLabels creates the label set for llite metrics (base + intent + op).
-func BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op, slurmJobID string) prometheus.Labels {
-	return prometheus.Labels{
-		"fs":            fsName,
-		"mount":         mountPath,
-		"access_intent": intent,
-		"op":            op,
-		"uid":           uid,
-		"username":      username,
-		"process":       comm,
-		"actor_type":    actorType,
-		"slurm_job_id":  slurmJobID,
-	}
-}
-
-// BuildPtlRPCPrometheusLabels creates the label set for ptlrpc metrics (base + op).
-func BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op, slurmJobID string) prometheus.Labels {
-	return prometheus.Labels{
-		"fs":           fsName,
-		"mount":        mountPath,
-		"op":           op,
-		"uid":          uid,
-		"username":     username,
-		"process":      comm,
-		"actor_type":   actorType,
-		"slurm_job_id": slurmJobID,
-	}
 }
