@@ -1,5 +1,10 @@
 # lustre-ebpf-exporter
 
+[![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.ai/claude-code)
+[![License](https://img.shields.io/github/license/yuuki/otel-lustre-tracer)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/yuuki/otel-lustre-tracer)](https://github.com/yuuki/otel-lustre-tracer/releases)
+[![Go](https://img.shields.io/badge/Go-%3E%3D1.26-blue?logo=go)](https://go.dev)
+
 `lustre-ebpf-exporter` measures Lustre client activity continuously on the client node.
 It uses `llite` as the primary observation plane for user-facing access activity and `PtlRPC`
 as the secondary observation plane for client-internal wait behavior.
