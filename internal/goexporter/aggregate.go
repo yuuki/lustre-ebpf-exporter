@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
 
 // InflightTracker tracks in-flight PtlRPC requests with zero-clamping
@@ -17,13 +19,15 @@ type InflightTracker struct {
 	counts   map[string]float64
 	gauge    *prometheus.GaugeVec
 	resolver *UsernameResolver
+	slurm    *slurm.Resolver
 }
 
-func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver) *InflightTracker {
+func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *InflightTracker {
 	return &InflightTracker{
 		counts:   map[string]float64{},
 		gauge:    gauge,
 		resolver: resolver,
+		slurm:    slurmResolver,
 	}
 }
 
@@ -55,6 +59,7 @@ func (t *InflightTracker) buildBaseLabels(event Event) prometheus.Labels {
 		ClassifyActorType(event.Comm),
 		event.MountPath,
 		event.FSName,
+		t.slurm.Resolve(event.PID).JobID,
 	)
 }
 
@@ -72,19 +77,20 @@ func labelsKey(labels prometheus.Labels) string {
 }
 
 // BuildBasePrometheusLabels creates the base label set used by all metric types.
-func BuildBasePrometheusLabels(uid, username, comm, actorType, mountPath, fsName string) prometheus.Labels {
+func BuildBasePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, slurmJobID string) prometheus.Labels {
 	return prometheus.Labels{
-		"fs":         fsName,
-		"mount":      mountPath,
-		"uid":        uid,
-		"username":   username,
-		"process":    comm,
-		"actor_type": actorType,
+		"fs":           fsName,
+		"mount":        mountPath,
+		"uid":          uid,
+		"username":     username,
+		"process":      comm,
+		"actor_type":   actorType,
+		"slurm_job_id": slurmJobID,
 	}
 }
 
 // BuildLLitePrometheusLabels creates the label set for llite metrics (base + intent + op).
-func BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op string) prometheus.Labels {
+func BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op, slurmJobID string) prometheus.Labels {
 	return prometheus.Labels{
 		"fs":            fsName,
 		"mount":         mountPath,
@@ -94,18 +100,20 @@ func BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsNam
 		"username":      username,
 		"process":       comm,
 		"actor_type":    actorType,
+		"slurm_job_id":  slurmJobID,
 	}
 }
 
 // BuildPtlRPCPrometheusLabels creates the label set for ptlrpc metrics (base + op).
-func BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op string) prometheus.Labels {
+func BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op, slurmJobID string) prometheus.Labels {
 	return prometheus.Labels{
-		"fs":         fsName,
-		"mount":      mountPath,
-		"op":         op,
-		"uid":        uid,
-		"username":   username,
-		"process":    comm,
-		"actor_type": actorType,
+		"fs":           fsName,
+		"mount":        mountPath,
+		"op":           op,
+		"uid":          uid,
+		"username":     username,
+		"process":      comm,
+		"actor_type":   actorType,
+		"slurm_job_id": slurmJobID,
 	}
 }

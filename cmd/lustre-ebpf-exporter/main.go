@@ -32,6 +32,9 @@ func main() {
 	var drainIntervalSeconds int
 	var durationSeconds int
 	var mounts mountPathsFlag
+	var slurmTTLSeconds int
+	var slurmNegativeTTLSeconds int
+	var slurmVerifyTTLSeconds int
 
 	flag.Var(&mounts, "mount", "Lustre client mount path (can be specified multiple times)")
 	flag.IntVar(&drainIntervalSeconds, "drain-interval", 5, "BPF counter map drain interval in seconds")
@@ -45,6 +48,16 @@ func main() {
 	)
 	flag.StringVar(&cfg.WebListenAddress, "web.listen-address", ":9108", "Address to listen on for web interface and telemetry")
 	flag.StringVar(&cfg.WebTelemetryPath, "web.telemetry-path", "/metrics", "Path under which to expose metrics")
+	flag.BoolVar(
+		&cfg.SlurmJobIDEnabled,
+		"slurm-jobid",
+		false,
+		"Resolve Slurm job id per pid via /proc/<pid>/environ and cgroup (label always present; empty when disabled or unresolved)",
+	)
+	flag.IntVar(&slurmTTLSeconds, "slurm-jobid-ttl", 30, "Cache TTL in seconds for a resolved Slurm job id")
+	flag.IntVar(&slurmNegativeTTLSeconds, "slurm-jobid-negative-ttl", 5, "Cache TTL in seconds for a negative (unresolved) Slurm job id lookup")
+	flag.IntVar(&slurmVerifyTTLSeconds, "slurm-jobid-verify-ttl", 1, "Grace period in seconds before re-checking /proc/<pid>/stat for pid reuse")
+	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -76,9 +89,31 @@ func main() {
 	cfg.DrainInterval = time.Duration(drainIntervalSeconds) * time.Second
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
 
+	if slurmTTLSeconds <= 0 {
+		log.Fatal("--slurm-jobid-ttl must be greater than zero")
+	}
+	if slurmNegativeTTLSeconds < 0 {
+		log.Fatal("--slurm-jobid-negative-ttl must be greater than or equal to zero")
+	}
+	if slurmVerifyTTLSeconds < 0 {
+		log.Fatal("--slurm-jobid-verify-ttl must be greater than or equal to zero")
+	}
+	if cfg.SlurmJobIDCacheSize <= 0 {
+		log.Fatal("--slurm-jobid-cache-size must be greater than zero")
+	}
+	cfg.SlurmJobIDTTL = time.Duration(slurmTTLSeconds) * time.Second
+	cfg.SlurmJobIDNegativeTTL = time.Duration(slurmNegativeTTLSeconds) * time.Second
+	cfg.SlurmJobIDVerifyTTL = time.Duration(slurmVerifyTTLSeconds) * time.Second
+
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
 	log.Printf("BPF counter drain interval: %s", cfg.DrainInterval)
+	if cfg.SlurmJobIDEnabled {
+		log.Printf("Slurm job id resolution: enabled (ttl=%s negative_ttl=%s verify_ttl=%s cache_size=%d)",
+			cfg.SlurmJobIDTTL, cfg.SlurmJobIDNegativeTTL, cfg.SlurmJobIDVerifyTTL, cfg.SlurmJobIDCacheSize)
+	} else {
+		log.Printf("Slurm job id resolution: disabled (label emitted as empty string)")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

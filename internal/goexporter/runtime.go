@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf"
+
+	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
 
 type EventSource interface {
@@ -37,9 +39,10 @@ func Run(ctx context.Context, cfg Config) error {
 	defer source.Close()
 
 	resolver := NewUsernameResolver()
+	slurmResolver := newSlurmResolverFromConfig(cfg)
 
 	lliteMap, rpcMap := source.CounterMaps()
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, mountInfos, resolver)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, mountInfos, resolver, slurmResolver)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
 	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector)
@@ -48,7 +51,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer exporter.Shutdown(context.Background())
 
-	inflightTracker := NewInflightTracker(exporter.Inflight, resolver)
+	inflightTracker := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
 
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
@@ -89,19 +92,19 @@ func Run(ctx context.Context, cfg Config) error {
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
-			processEvent(event, exporter, inflightTracker, resolver)
+			processEvent(event, exporter, inflightTracker, resolver, slurmResolver)
 		}
 	}
 }
 
-func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver) {
+func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
 	if event.Plane == PlaneLLite {
 		intent := AccessIntentForOp(event.Op)
 		if intent == "" || event.DurationUS == 0 {
 			return
 		}
-		uid, username, actorType := resolveEventIdentity(event, resolver)
-		labels := BuildLLitePrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, intent, event.Op)
+		uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+		labels := BuildLLitePrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, intent, event.Op, slurmJobID)
 		exporter.AccessLatency.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
 		return
 	}
@@ -112,8 +115,8 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 
 	if event.Op == OpQueueWait {
 		if event.DurationUS > 0 {
-			uid, username, actorType := resolveEventIdentity(event, resolver)
-			labels := BuildPtlRPCPrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, event.Op)
+			uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+			labels := BuildPtlRPCPrometheusLabels(uid, username, event.Comm, actorType, event.MountPath, event.FSName, event.Op, slurmJobID)
 			exporter.RPCWaitLat.With(labels).Observe(float64(event.DurationUS) / 1_000_000.0)
 		}
 		return
@@ -127,9 +130,23 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 	}
 }
 
-func resolveEventIdentity(event Event, resolver *UsernameResolver) (uid, username, actorType string) {
+func resolveEventIdentity(event Event, resolver *UsernameResolver, slurmResolver *slurm.Resolver) (uid, username, actorType, slurmJobID string) {
 	uid = strconv.FormatUint(uint64(event.UID), 10)
 	username = resolver.Resolve(event.UID)
 	actorType = ClassifyActorType(event.Comm)
+	slurmJobID = slurmResolver.Resolve(event.PID).JobID
 	return
+}
+
+// newSlurmResolverFromConfig constructs a slurm.Resolver from the exporter
+// Config. It wires the default /proc-backed readers on Linux builds and
+// stubs them out on other platforms.
+func newSlurmResolverFromConfig(cfg Config) *slurm.Resolver {
+	return slurm.NewDefault(slurm.Options{
+		Enabled:     cfg.SlurmJobIDEnabled,
+		TTL:         cfg.SlurmJobIDTTL,
+		NegativeTTL: cfg.SlurmJobIDNegativeTTL,
+		VerifyTTL:   cfg.SlurmJobIDVerifyTTL,
+		MaxEntries:  cfg.SlurmJobIDCacheSize,
+	})
 }

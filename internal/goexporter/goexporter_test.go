@@ -12,7 +12,17 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
+
+// testSlurmResolver returns a disabled slurm resolver suitable for tests
+// that do not exercise Slurm job id resolution. Disabled means Resolve()
+// always returns JobInfo{} without touching any FSReader, so callers do
+// not need to inject fakes.
+func testSlurmResolver() *slurm.Resolver {
+	return slurm.New(slurm.Options{Enabled: false})
+}
 
 func TestClassifyActorType(t *testing.T) {
 	t.Parallel()
@@ -103,7 +113,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver)
+	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
@@ -113,7 +123,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 		{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"},
 	}
 	for _, event := range events {
-		processEvent(event, exporter, inflight, resolver)
+		processEvent(event, exporter, inflight, resolver, testSlurmResolver())
 	}
 
 	text, err := exporter.RenderText()
@@ -132,6 +142,98 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	}
 }
 
+// TestDirectObservePropagatesSlurmJobID verifies that a resolver which
+// reports a real Slurm job id causes the slurm_job_id label to appear
+// with that value on both the histogram and the inflight gauge.
+func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
+	t.Parallel()
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+
+	// Fake /proc: pid 555 is in Slurm job 4242 via environ; starttime is
+	// constant so the cache remains consistent across calls.
+	fakeEnviron := func(path string) ([]byte, error) {
+		return []byte("PATH=/bin\x00SLURM_JOB_ID=4242\x00HOME=/root\x00"), nil
+	}
+	fakeCgroup := func(path string) ([]byte, error) {
+		return []byte("0::/user.slice\n"), nil
+	}
+	fakeStat := func(path string) ([]byte, error) {
+		return []byte("555 (dd) S 1 555 555 0 -1 4194304 0 0 0 0 0 0 0 0 20 0 1 0 12345 0 0\n"), nil
+	}
+	slurmResolver := slurm.New(slurm.Options{
+		Enabled:     true,
+		TTL:         30 * time.Second,
+		NegativeTTL: 5 * time.Second,
+		VerifyTTL:   1 * time.Second,
+		MaxEntries:  16,
+		ReadEnviron: fakeEnviron,
+		ReadCgroup:  fakeCgroup,
+		ReadStat:    fakeStat,
+	})
+
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+
+	events := []Event{
+		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
+		{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 555, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"},
+	}
+	for _, event := range events {
+		processEvent(event, exporter, inflight, resolver, slurmResolver)
+	}
+
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(text, `slurm_job_id="4242"`) {
+		t.Fatalf("expected slurm_job_id=\"4242\" in rendered metrics, got: %s", text)
+	}
+	// The histogram family must carry the label on its buckets.
+	if !strings.Contains(text, `lustre_client_access_duration_seconds_bucket`) {
+		t.Fatalf("missing histogram family: %s", text)
+	}
+	// The inflight gauge must carry the label too.
+	if !strings.Contains(text, `lustre_client_inflight_requests`) {
+		t.Fatalf("missing inflight metric: %s", text)
+	}
+}
+
+// TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel verifies that when
+// the resolver is disabled the slurm_job_id label is still present in the
+// schema but has an empty value.
+func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
+	t.Parallel()
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+
+	processEvent(Event{
+		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd",
+		DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, exporter, inflight, resolver, testSlurmResolver())
+
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `slurm_job_id=""`) {
+		t.Fatalf("expected empty slurm_job_id label in rendered metrics, got: %s", text)
+	}
+}
+
 // TestDirectObserveSkipsZeroDuration verifies zero-duration events
 // do not produce histogram observations.
 func TestDirectObserveSkipsZeroDuration(t *testing.T) {
@@ -144,9 +246,9 @@ func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver)
+	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
 
-	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, exporter, inflight, resolver)
+	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, exporter, inflight, resolver, testSlurmResolver())
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -166,7 +268,7 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 		baseLabels,
 	)
 	resolver := testResolver()
-	tracker := NewInflightTracker(gauge, resolver)
+	tracker := NewInflightTracker(gauge, resolver, testSlurmResolver())
 
 	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -175,7 +277,7 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 	tracker.Update(-1, event)
 
 	// Verify the gauge never goes negative
-	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs")
+	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs", "")
 	metric := gauge.With(labels)
 	dto := readGaugeValue(t, metric)
 	if dto < 0 {
@@ -191,14 +293,14 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 		baseLabels,
 	)
 	resolver := testResolver()
-	tracker := NewInflightTracker(gauge, resolver)
+	tracker := NewInflightTracker(gauge, resolver, testSlurmResolver())
 
 	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
 	tracker.Update(+1, event)
 	tracker.Update(+1, event)
 
-	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs")
+	labels := BuildBasePrometheusLabels("1001", "testuser", "dd", "user", "/mnt/lustre", "lustrefs", "")
 	val := readGaugeValue(t, gauge.With(labels))
 	if val != 2 {
 		t.Fatalf("expected inflight=2, got %f", val)
@@ -272,18 +374,18 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver)
+	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
 
 	// Feed events through the direct pipeline
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, exporter, inflight, resolver)
+	}, exporter, inflight, resolver, testSlurmResolver())
 
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, exporter, inflight, resolver)
+	}, exporter, inflight, resolver, testSlurmResolver())
 
 	text, err := exporter.RenderText()
 	if err != nil {

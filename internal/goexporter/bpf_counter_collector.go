@@ -9,6 +9,8 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
 
 // BPFCounterCollector reads aggregated counters from BPF PERCPU_HASH maps
@@ -21,6 +23,13 @@ type BPFCounterCollector struct {
 	rpcMap     *ebpf.Map
 	mountInfos []MountInfo
 	resolver   *UsernameResolver
+	// slurmResolver is accepted for API symmetry with the perf-event path,
+	// but counter metrics cannot resolve slurm_job_id: the BPF agg_key is
+	// keyed kernel-side without a pid, so by the time userspace drains the
+	// map there is no pid to feed into /proc/<pid>/environ. Phase 1 always
+	// emits slurm_job_id="" on counters. A Phase 2 design could push the
+	// pid->jobid mapping into a BPF LRU map and include job_id in agg_key.
+	slurmResolver *slurm.Resolver
 
 	accumulated map[string]*accumulatedCounter
 
@@ -35,13 +44,14 @@ type accumulatedCounter struct {
 	labels   prometheus.Labels
 }
 
-func NewBPFCounterCollector(lliteMap, rpcMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver) *BPFCounterCollector {
+func NewBPFCounterCollector(lliteMap, rpcMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *BPFCounterCollector {
 	return &BPFCounterCollector{
-		lliteMap:    lliteMap,
-		rpcMap:      rpcMap,
-		mountInfos:  mountInfos,
-		resolver:    resolver,
-		accumulated: map[string]*accumulatedCounter{},
+		lliteMap:      lliteMap,
+		rpcMap:        rpcMap,
+		mountInfos:    mountInfos,
+		resolver:      resolver,
+		slurmResolver: slurmResolver,
+		accumulated:   map[string]*accumulatedCounter{},
 		accessOpsDesc: prometheus.NewDesc(
 			"lustre_client_access_operations_total",
 			"Aggregated llite access operation count",
@@ -80,6 +90,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 					c.accessOpsDesc, prometheus.CounterValue, acc.opsCount,
 					acc.labels["fs"], acc.labels["mount"], acc.labels["access_intent"], acc.labels["op"],
 					acc.labels["uid"], acc.labels["username"], acc.labels["process"], acc.labels["actor_type"],
+					acc.labels["slurm_job_id"],
 				)
 			}
 			if acc.bytesSum > 0 {
@@ -87,6 +98,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 					c.dataBytesDesc, prometheus.CounterValue, acc.bytesSum,
 					acc.labels["fs"], acc.labels["mount"], acc.labels["access_intent"], acc.labels["op"],
 					acc.labels["uid"], acc.labels["username"], acc.labels["process"], acc.labels["actor_type"],
+					acc.labels["slurm_job_id"],
 				)
 			}
 		} else {
@@ -96,6 +108,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 					c.rpcWaitOpsDesc, prometheus.CounterValue, acc.opsCount,
 					acc.labels["fs"], acc.labels["mount"], acc.labels["op"],
 					acc.labels["uid"], acc.labels["username"], acc.labels["process"], acc.labels["actor_type"],
+					acc.labels["slurm_job_id"],
 				)
 			}
 		}
@@ -186,14 +199,18 @@ func (c *BPFCounterCollector) buildLabels(key bpfAggKey, isLLite bool) prometheu
 	comm := sanitizeComm(key.Comm[:])
 	actorType := actorTypeName(key.ActorType)
 
+	// slurm_job_id is always empty for counters. See BPFCounterCollector
+	// doc for rationale (agg_key has no pid, so we cannot resolve it here).
+	const slurmJobID = ""
+
 	if isLLite {
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
-		return BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op)
+		return BuildLLitePrometheusLabels(uid, username, comm, actorType, mountPath, fsName, intent, op, slurmJobID)
 	}
 
 	op := rawOpToName(key.Op)
-	return BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op)
+	return BuildPtlRPCPrometheusLabels(uid, username, comm, actorType, mountPath, fsName, op, slurmJobID)
 }
 
 func rawOpToName(raw uint8) string {

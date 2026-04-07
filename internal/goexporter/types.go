@@ -148,6 +148,21 @@ type Config struct {
 	LegacySymbolAllowMissing bool
 	WebListenAddress         string
 	WebTelemetryPath         string
+
+	// SlurmJobIDEnabled turns on per-pid Slurm job id resolution via
+	// /proc/<pid>/environ and /proc/<pid>/cgroup. The slurm_job_id label
+	// is always part of the metric schema (emitted as "" when disabled or
+	// when the process is not in a Slurm job).
+	SlurmJobIDEnabled bool
+	// SlurmJobIDTTL is the cache lifetime for a successful lookup.
+	SlurmJobIDTTL time.Duration
+	// SlurmJobIDNegativeTTL is the cache lifetime for a miss.
+	SlurmJobIDNegativeTTL time.Duration
+	// SlurmJobIDVerifyTTL is how long a cached entry can be served
+	// without re-checking /proc/<pid>/stat for pid reuse.
+	SlurmJobIDVerifyTTL time.Duration
+	// SlurmJobIDCacheSize bounds the number of cached pids.
+	SlurmJobIDCacheSize int
 }
 
 type Event struct {
