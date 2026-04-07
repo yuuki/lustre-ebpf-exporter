@@ -13,7 +13,7 @@ log "verifying minimal client-side observer"
 guest_run "${CLIENT_INSTANCE}" /bin/bash -lc "sudo bash -lc '
 set -euo pipefail
 rm -f ${trace_file} ${trace_err} ${smoke_file}
-stdbuf -oL $(guest_repo_root)/tools/lustre_client_trace.sh \
+stdbuf -oL $(guest_repo_root)/legacy/tools/lustre_client_trace.sh \
   --mount ${CLIENT_MOUNTPOINT} \
   --window-seconds 5 \
   --duration 30 \

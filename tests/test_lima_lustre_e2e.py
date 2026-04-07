@@ -7,8 +7,11 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LEGACY_ROOT = ROOT / "legacy"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(LEGACY_ROOT) not in sys.path:
+    sys.path.insert(0, str(LEGACY_ROOT))
 
 
 def read_text(relpath: str) -> str:
@@ -22,7 +25,7 @@ def read_yaml(relpath: str) -> dict:
 def test_expected_lima_e2e_files_exist() -> None:
     expected = [
         "README.md",
-        "requirements-observer.txt",
+        "legacy/requirements-observer.txt",
         "e2e/lima/README.md",
         "e2e/lima/config/lustre-2.14.0.env",
         "e2e/lima/templates/lustre-server.yaml",
@@ -36,8 +39,8 @@ def test_expected_lima_e2e_files_exist() -> None:
         "e2e/lima/guest/common.sh",
         "e2e/lima/guest/server-setup.sh",
         "e2e/lima/guest/client-setup.sh",
-        "tools/lustre_client_observer.py",
-        "tools/lustre_client_trace.sh",
+        "legacy/tools/lustre_client_observer.py",
+        "legacy/tools/lustre_client_trace.sh",
         "cmd/lustre-ebpf-exporter/main.go",
         "internal/bpf/lustre_ebpf_exporter.bpf.c",
         "Makefile",
@@ -218,7 +221,7 @@ def test_client_package_install_prefers_prebuilt_kmods_with_dkms_fallback() -> N
     assert dkms_fallback_block in client
     assert 'dnf install -y \\\n  bpftrace \\\n  python39 \\\n  python39-pip' in client
     assert 'python3.9 -m pip install --upgrade pip' in client
-    assert 'python3.9 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"' in client
+    assert 'python3.9 -m pip install -r "${REPO_ROOT}/legacy/requirements-observer.txt"' in client
 
 
 def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
@@ -246,7 +249,7 @@ def test_client_observer_bpftrace_program_targets_llite_and_ptlrpc() -> None:
 
 
 def test_client_observer_wrapper_executes_python_agent() -> None:
-    script = read_text("tools/lustre_client_trace.sh")
+    script = read_text("legacy/tools/lustre_client_trace.sh")
 
     assert "lustre_client_observer/agent.py" in script
     assert "python3.9" in script

@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 import subprocess
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+LEGACY_ROOT = Path(__file__).resolve().parents[1]
+if str(LEGACY_ROOT) not in sys.path:
+    sys.path.insert(0, str(LEGACY_ROOT))
 
 from unittest.mock import patch
 
@@ -346,7 +346,7 @@ def test_resolve_lustre_mount_identity_uses_major_minor_from_stat_device() -> No
 
 def test_observer_cli_help_runs_from_tools_entrypoint() -> None:
     result = subprocess.run(
-        [sys.executable, str(ROOT / "tools/lustre_client_observer.py"), "--help"],
+        [sys.executable, str(LEGACY_ROOT / "tools/lustre_client_observer.py"), "--help"],
         capture_output=True,
         text=True,
         check=False,

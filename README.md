@@ -6,8 +6,12 @@ as the secondary observation plane for client-internal wait behavior.
 
 The repository currently contains two implementations:
 
-- A preferred Go-based Prometheus Exporter backed by eBPF CO-RE.
-- A legacy Python + `bpftrace` implementation kept as a fallback and reference path.
+- **First-class**: a Go-based Prometheus Exporter backed by eBPF CO-RE. This is the
+  supported runtime and the only path that receives active development.
+- **Second-class (legacy)**: a Python + `bpftrace` implementation, kept under
+  [`legacy/`](legacy/) as a reference path and a temporary fallback for the handful of
+  metrics the Go path does not yet emit. The legacy path is frozen and will be removed
+  once the Go exporter reaches metric parity.
 
 The project is aimed at answering questions such as:
 
@@ -65,20 +69,34 @@ And it classifies actors into:
 
 ## Repository Layout
 
+First-class (Go exporter):
+
 - `cmd/lustre-ebpf-exporter`
-  Go CLI entrypoint for the preferred exporter.
+  Go CLI entrypoint for the supported exporter.
 - `internal/bpf`
   CO-RE BPF program source and generated artifacts.
 - `internal/goexporter`
   Go runtime, aggregation, mount resolution, and Prometheus export.
-- `lustre_client_observer`
-  Legacy Python agent.
-- `tools/lustre_client_trace.sh`
-  Compatibility wrapper for the Python implementation.
-- `e2e/lima`
-  Lima-based multi-VM Lustre test environment.
 - `build/docker/go-exporter.Dockerfile`
   Docker build environment for Linux Go exporter artifacts.
+
+Second-class (legacy Python + `bpftrace`):
+
+- `legacy/lustre_client_observer/`
+  Legacy Python agent (frozen).
+- `legacy/tools/lustre_client_trace.sh`
+  Compatibility wrapper for the Python implementation.
+- `legacy/tools/lustre_client_observer.py`
+  CLI entry point for the Python agent.
+- `legacy/tests/test_observer_agent.py`
+  Unit tests that cover the legacy Python agent.
+- `legacy/requirements-observer.txt`
+  Python dependencies for the legacy path.
+
+Shared:
+
+- `e2e/lima`
+  Lima-based multi-VM Lustre test environment used by both paths.
 
 ## Metrics
 
@@ -133,7 +151,7 @@ families that it can populate meaningfully.
 
 ## Quick Start
 
-### Preferred Path: Go CO-RE Exporter
+### First-class Path: Go CO-RE Exporter
 
 Build Linux artifacts with Docker:
 
@@ -176,12 +194,16 @@ Useful flags:
 The exporter follows the standard Prometheus exporter flag style for `--web.listen-address`
 and `--web.telemetry-path`.
 
-### Legacy Path: Python + bpftrace
+### Second-class Path: Legacy Python + bpftrace
+
+> The legacy path lives under [`legacy/`](legacy/) and is frozen. Use it only when you
+> need `lustre_client_access_duration_seconds` or `lustre_client_data_bytes_total`
+> today; new work should target the Go exporter.
 
 Run the compatibility wrapper:
 
 ```bash
-sudo ./tools/lustre_client_trace.sh \
+sudo ./legacy/tools/lustre_client_trace.sh \
   --mount /mnt/lustre
 ```
 
@@ -190,7 +212,7 @@ By default it exposes Prometheus metrics on port `9108`.
 Mirror the legacy exporter to OTLP as well:
 
 ```bash
-sudo ./tools/lustre_client_trace.sh \
+sudo ./legacy/tools/lustre_client_trace.sh \
   --mount /mnt/lustre \
   --collector-endpoint http://127.0.0.1:4318/v1/metrics
 ```
@@ -198,7 +220,7 @@ sudo ./tools/lustre_client_trace.sh \
 Run the legacy exporter in local inspection mode:
 
 ```bash
-sudo ./tools/lustre_client_trace.sh \
+sudo ./legacy/tools/lustre_client_trace.sh \
   --mount /mnt/lustre \
   --window-seconds 5 \
   --duration 30 \
@@ -233,13 +255,13 @@ Go exporter:
 - a working Lustre client mount
 - a compatible prebuilt BPF object
 
-Legacy Python exporter:
+Legacy Python exporter (second-class):
 
 - Linux
 - root privileges
 - `bpftrace`
 - Python 3.9 or later
-- packages from `requirements-observer.txt`
+- packages from `legacy/requirements-observer.txt`
 
 ## Verification
 
@@ -249,10 +271,10 @@ Go unit tests:
 go test ./...
 ```
 
-Python and repository static tests:
+Python and repository static tests (legacy path lives under `legacy/tests/`):
 
 ```bash
-pytest tests/test_lima_lustre_e2e.py tests/test_observer_agent.py -q
+pytest tests/test_lima_lustre_e2e.py legacy/tests/test_observer_agent.py -q
 ```
 
 Lima E2E for the Go exporter:
@@ -283,12 +305,16 @@ For full Lima environment setup, see [e2e/lima/README.md](e2e/lima/README.md).
 ## Why Two Implementations?
 
 The Python path was the fastest way to validate the observation model with `bpftrace`.
-The Go path is the preferred long-term runtime because it offers:
+It now lives under [`legacy/`](legacy/) as a second-class implementation: frozen, kept
+only for reference and for the narrow set of metrics the Go path does not yet emit.
+
+The Go path is the first-class long-term runtime because it offers:
 
 - a standard Prometheus exporter CLI
 - a CO-RE-based deployment model
 - cleaner packaging for production use
-- a path toward replacing the legacy tracer once metric parity is good enough
+- a path toward retiring the legacy tracer once metric parity is good enough
 
-Until the Go path reaches full metric parity, the Python exporter remains the better choice when
-you need llite latency and byte-volume metrics.
+Until the Go path reaches full metric parity, the legacy Python exporter remains the only
+option when you need llite latency and byte-volume metrics. Once that gap closes the
+`legacy/` tree is expected to be removed.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Lustre eBPF exporter — eBPF-backed Prometheus exporter that measures Lustre client activity (llite + PtlRPC) per-user/per-process on the client node. Two implementations coexist: a preferred Go CO-RE exporter and a legacy Python + bpftrace fallback.
+Lustre eBPF exporter — eBPF-backed Prometheus exporter that measures Lustre client activity (llite + PtlRPC) per-user/per-process on the client node. Two implementations coexist: a **first-class** Go CO-RE exporter under `cmd/`/`internal/`, and a **second-class** legacy Python + bpftrace fallback, now confined to `legacy/`.
 
 ## Build Commands
 
@@ -23,15 +23,15 @@ go test ./...
 # Run a single Go test
 go test ./internal/goexporter -run TestDirectObserveUpdatesHistogram
 
-# Python tests
-pytest tests/test_observer_agent.py -q
+# Python tests (legacy path)
+pytest legacy/tests/test_observer_agent.py -q
 
 # BPF verifier check via Docker (macOS OK, requires Docker --privileged)
 make verify-bpf
 
 # Lima E2E (requires full Lima Lustre environment)
-bash ./e2e/lima/scripts/verify-observer-go.sh    # Go exporter
-bash ./e2e/lima/scripts/verify-observer.sh        # legacy Python
+bash ./e2e/lima/scripts/verify-observer-go.sh    # Go exporter (first-class)
+bash ./e2e/lima/scripts/verify-observer.sh        # legacy Python (second-class)
 ```
 
 ## Architecture
@@ -59,9 +59,17 @@ Pipeline: **BPF perf events → immediate Prometheus update** (histograms/gauges
 - `internal/goexporter/mount.go` — resolves Lustre mount path to device major/minor via `/proc/mounts`.
 - `internal/goexporter/runtime.go` — `Run()` processes perf events in a select loop, updating Prometheus histograms/gauges immediately. No periodic flush timer.
 
-### Legacy Python Exporter (`lustre_client_observer/agent.py`)
+### Legacy Python Exporter (`legacy/lustre_client_observer/agent.py`)
 
-Generates a bpftrace script at runtime, parses tab-delimited `EVENT` lines from stdout, aggregates windows, exports to Prometheus and/or OTLP. Entry via `tools/lustre_client_trace.sh`.
+Second-class, frozen. Everything Python + bpftrace lives under `legacy/`:
+
+- `legacy/lustre_client_observer/agent.py` — Python agent; generates a bpftrace script at runtime, parses tab-delimited `EVENT` lines from stdout, aggregates windows, exports to Prometheus and/or OTLP.
+- `legacy/tools/lustre_client_trace.sh` — shell wrapper that is the entry point.
+- `legacy/tools/lustre_client_observer.py` — Python CLI entry point.
+- `legacy/tests/test_observer_agent.py` — unit tests for the legacy agent.
+- `legacy/requirements-observer.txt` — Python dependencies.
+
+Treat `legacy/` as read-only: bug fixes are welcome, but new features must target the Go exporter.
 
 ### Key Invariants
 

@@ -34,7 +34,7 @@ find_python() {
 }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "${script_dir}/.." && pwd)"
+legacy_root="$(cd "${script_dir}/.." && pwd)"
 
 mount_path="/mnt/lustre"
 duration=""
@@ -92,5 +92,5 @@ if [[ ! -d "${mount_path}" ]]; then
   exit 1
 fi
 
-export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
-exec "${python_cmd}" "${repo_root}/lustre_client_observer/agent.py" "${observer_args[@]}"
+export PYTHONPATH="${legacy_root}${PYTHONPATH:+:${PYTHONPATH}}"
+exec "${python_cmd}" "${legacy_root}/lustre_client_observer/agent.py" "${observer_args[@]}"

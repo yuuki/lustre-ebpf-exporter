@@ -52,7 +52,7 @@ dnf install -y \
 
 REPO_ROOT="$(cd "$(dirname "${COMMON_SCRIPT}")/../../.." && pwd)"
 python3.9 -m pip install --upgrade pip
-python3.9 -m pip install -r "${REPO_ROOT}/requirements-observer.txt"
+python3.9 -m pip install -r "${REPO_ROOT}/legacy/requirements-observer.txt"
 
 iface="$(primary_interface)"
 configure_lnet "${iface}"
