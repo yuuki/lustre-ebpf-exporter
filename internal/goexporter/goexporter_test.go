@@ -273,8 +273,8 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
 	// free_req without prior send_new_req
-	tracker.Update(-1, event)
-	tracker.Update(-1, event)
+	tracker.Update(-1, event, "1001", "testuser", "user", "")
+	tracker.Update(-1, event, "1001", "testuser", "user", "")
 
 	// Verify the gauge never goes negative. Positional order matches baseLabels.
 	metric := gauge.WithLabelValues("lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", "")
@@ -296,8 +296,8 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 
 	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
-	tracker.Update(+1, event)
-	tracker.Update(+1, event)
+	tracker.Update(+1, event, "1001", "testuser", "user", "")
+	tracker.Update(+1, event, "1001", "testuser", "user", "")
 
 	metric := gauge.WithLabelValues("lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", "")
 	val := readGaugeValue(t, metric)
@@ -306,7 +306,7 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 	}
 
 	// free one request
-	tracker.Update(-1, event)
+	tracker.Update(-1, event, "1001", "testuser", "user", "")
 	val = readGaugeValue(t, metric)
 	if val != 1 {
 		t.Fatalf("expected inflight=1, got %f", val)

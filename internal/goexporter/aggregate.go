@@ -29,9 +29,11 @@ func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, 
 }
 
 // Update adjusts the inflight count for the given event by delta (+1 or -1),
-// clamps at zero, and updates the Prometheus gauge.
-func (t *InflightTracker) Update(delta float64, event Event) {
-	uid, username, actorType, slurmJobID := resolveEventIdentity(event, t.resolver, t.slurm)
+// clamps at zero, and updates the Prometheus gauge. Identity fields must
+// be pre-resolved by the caller (typically via resolveEventIdentity) so the
+// hot path does not pay for username/slurm lookups twice when the caller
+// also needs them for sibling counters.
+func (t *InflightTracker) Update(delta float64, event Event, uid, username, actorType, slurmJobID string) {
 	key := baseLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
 
 	t.mu.Lock()
