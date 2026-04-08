@@ -68,6 +68,19 @@ func TestAccessIntentForOp(t *testing.T) {
 	if got := AccessIntentForOp(OpQueueWait); got != "" {
 		t.Fatalf("expected empty intent, got %q", got)
 	}
+
+	namespaceReads := []string{OpClose, OpGetattr, OpGetxattr, OpStatfs}
+	for _, op := range namespaceReads {
+		if got := AccessIntentForOp(op); got != "namespace_read" {
+			t.Fatalf("op %q: expected namespace_read, got %q", op, got)
+		}
+	}
+	namespaceMutations := []string{OpMkdir, OpMknod, OpRename, OpRmdir, OpSetattr, OpSetxattr, OpUnlink}
+	for _, op := range namespaceMutations {
+		if got := AccessIntentForOp(op); got != "namespace_mutation" {
+			t.Fatalf("op %q: expected namespace_mutation, got %q", op, got)
+		}
+	}
 }
 
 func TestResolveMountInfoFromText(t *testing.T) {

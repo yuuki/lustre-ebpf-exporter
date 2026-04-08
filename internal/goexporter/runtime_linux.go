@@ -59,6 +59,28 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		{symbol: "ptlrpc_queue_wait", program: "ptlrpc_queue_wait_exit", ret: true, optional: true},
 		{symbol: "ptlrpc_send_new_req", program: "ptlrpc_send_new_req_enter", optional: true},
 		{symbol: "__ptlrpc_free_req", program: "ptlrpc_free_req_enter", optional: true},
+		// Metadata-op probes (Linux 5.12+ assumed). Marked optional to tolerate
+		// symbol/signature drift across kernel and Lustre versions.
+		{symbol: "ll_file_release", program: "ll_file_release_enter", optional: true},
+		{symbol: "ll_file_release", program: "ll_file_release_exit", ret: true, optional: true},
+		{symbol: "ll_getattr", program: "ll_getattr_enter", optional: true},
+		{symbol: "ll_getattr", program: "ll_getattr_exit", ret: true, optional: true},
+		{symbol: "ll_xattr_get_common", program: "ll_getxattr_enter", optional: true},
+		{symbol: "ll_xattr_get_common", program: "ll_getxattr_exit", ret: true, optional: true},
+		{symbol: "ll_xattr_set_common", program: "ll_setxattr_enter", optional: true},
+		{symbol: "ll_xattr_set_common", program: "ll_setxattr_exit", ret: true, optional: true},
+		{symbol: "ll_mkdir", program: "ll_mkdir_enter", optional: true},
+		{symbol: "ll_mkdir", program: "ll_mkdir_exit", ret: true, optional: true},
+		{symbol: "ll_mknod", program: "ll_mknod_enter", optional: true},
+		{symbol: "ll_mknod", program: "ll_mknod_exit", ret: true, optional: true},
+		{symbol: "ll_rename", program: "ll_rename_enter", optional: true},
+		{symbol: "ll_rename", program: "ll_rename_exit", ret: true, optional: true},
+		{symbol: "ll_rmdir", program: "ll_rmdir_enter", optional: true},
+		{symbol: "ll_rmdir", program: "ll_rmdir_exit", ret: true, optional: true},
+		{symbol: "ll_setattr", program: "ll_setattr_enter", optional: true},
+		{symbol: "ll_setattr", program: "ll_setattr_exit", ret: true, optional: true},
+		{symbol: "ll_statfs", program: "ll_statfs_enter", optional: true},
+		{symbol: "ll_statfs", program: "ll_statfs_exit", ret: true, optional: true},
 	}
 
 	spec, err := bpf.LoadCollectionSpec()

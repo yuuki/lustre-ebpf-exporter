@@ -23,6 +23,16 @@ const (
 	rawOpQueueWait  uint8 = 6
 	rawOpSendNewReq uint8 = 7
 	rawOpFreeReq    uint8 = 8
+	rawOpClose      uint8 = 9
+	rawOpGetattr    uint8 = 10
+	rawOpGetxattr   uint8 = 11
+	rawOpMkdir      uint8 = 12
+	rawOpMknod      uint8 = 13
+	rawOpRename     uint8 = 14
+	rawOpRmdir      uint8 = 15
+	rawOpSetattr    uint8 = 16
+	rawOpSetxattr   uint8 = 17
+	rawOpStatfs     uint8 = 18
 )
 
 const (
@@ -38,6 +48,13 @@ const (
 	OpUnlink     = "unlink"
 	OpMkdir      = "mkdir"
 	OpRmdir      = "rmdir"
+	OpClose      = "close"
+	OpGetattr    = "getattr"
+	OpGetxattr   = "getxattr"
+	OpMknod      = "mknod"
+	OpSetattr    = "setattr"
+	OpSetxattr   = "setxattr"
+	OpStatfs     = "statfs"
 )
 
 const (
@@ -118,9 +135,13 @@ func intentName(raw uint8) string {
 var (
 	IntentForOp = map[string]string{
 		OpLookup: IntentNamespaceRead, OpOpen: IntentNamespaceRead,
+		OpClose: IntentNamespaceRead, OpGetattr: IntentNamespaceRead,
+		OpGetxattr: IntentNamespaceRead, OpStatfs: IntentNamespaceRead,
 		OpRename: IntentNamespaceMutation, OpUnlink: IntentNamespaceMutation,
 		OpMkdir: IntentNamespaceMutation, OpRmdir: IntentNamespaceMutation,
-		OpRead: IntentDataRead, OpWrite: IntentDataWrite,
+		OpMknod: IntentNamespaceMutation, OpSetattr: IntentNamespaceMutation,
+		OpSetxattr: IntentNamespaceMutation,
+		OpRead:     IntentDataRead, OpWrite: IntentDataWrite,
 		OpFsync: IntentSync,
 	}
 	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
@@ -250,6 +271,26 @@ func opName(raw uint8) (string, error) {
 		return OpSendNewReq, nil
 	case rawOpFreeReq:
 		return OpFreeReq, nil
+	case rawOpClose:
+		return OpClose, nil
+	case rawOpGetattr:
+		return OpGetattr, nil
+	case rawOpGetxattr:
+		return OpGetxattr, nil
+	case rawOpMkdir:
+		return OpMkdir, nil
+	case rawOpMknod:
+		return OpMknod, nil
+	case rawOpRename:
+		return OpRename, nil
+	case rawOpRmdir:
+		return OpRmdir, nil
+	case rawOpSetattr:
+		return OpSetattr, nil
+	case rawOpSetxattr:
+		return OpSetxattr, nil
+	case rawOpStatfs:
+		return OpStatfs, nil
 	default:
 		return "", fmt.Errorf("unknown op code: %d", raw)
 	}
