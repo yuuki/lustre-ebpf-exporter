@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
@@ -130,12 +131,20 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 		return
 	}
 
+	var counter *prometheus.CounterVec
+	var delta float64
 	switch event.Op {
 	case OpSendNewReq:
-		inflight.Update(1, event)
+		counter, delta = exporter.RequestsStarted, 1
 	case OpFreeReq:
-		inflight.Update(-1, event)
+		counter, delta = exporter.RequestsCompleted, -1
+	default:
+		return
 	}
+	uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+	labels := baseLabelValues(event, uid, username, actorType, slurmJobID)
+	counter.WithLabelValues(labels...).Inc()
+	inflight.Update(delta, event, uid, username, actorType, slurmJobID)
 }
 
 func resolveEventIdentity(event Event, resolver *UsernameResolver, slurmResolver *slurm.Resolver) (uid, username, actorType, slurmJobID string) {

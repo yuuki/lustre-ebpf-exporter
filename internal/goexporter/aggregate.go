@@ -29,9 +29,11 @@ func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, 
 }
 
 // Update adjusts the inflight count for the given event by delta (+1 or -1),
-// clamps at zero, and updates the Prometheus gauge.
-func (t *InflightTracker) Update(delta float64, event Event) {
-	uid, username, actorType, slurmJobID := resolveEventIdentity(event, t.resolver, t.slurm)
+// clamps at zero, and updates the Prometheus gauge. Identity fields must
+// be pre-resolved by the caller (typically via resolveEventIdentity) so the
+// hot path does not pay for username/slurm lookups twice when the caller
+// also needs them for sibling counters.
+func (t *InflightTracker) Update(delta float64, event Event, uid, username, actorType, slurmJobID string) {
 	key := baseLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
 
 	t.mu.Lock()
@@ -45,9 +47,14 @@ func (t *InflightTracker) Update(delta float64, event Event) {
 	}
 	t.mu.Unlock()
 
-	t.gauge.WithLabelValues(
-		event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID,
-	).Set(val)
+	t.gauge.WithLabelValues(baseLabelValues(event, uid, username, actorType, slurmJobID)...).Set(val)
+}
+
+// baseLabelValues returns label values in baseLabels positional order.
+// Centralizing this prevents drift between the gauge, counters, and any
+// future metric that shares the base label schema.
+func baseLabelValues(event Event, uid, username, actorType, slurmJobID string) []string {
+	return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID}
 }
 
 // labelKeySep is used to join positional label values into a cache key.

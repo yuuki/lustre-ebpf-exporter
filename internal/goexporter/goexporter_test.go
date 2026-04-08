@@ -273,8 +273,8 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
 	// free_req without prior send_new_req
-	tracker.Update(-1, event)
-	tracker.Update(-1, event)
+	tracker.Update(-1, event, "1001", "testuser", "user", "")
+	tracker.Update(-1, event, "1001", "testuser", "user", "")
 
 	// Verify the gauge never goes negative. Positional order matches baseLabels.
 	metric := gauge.WithLabelValues("lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", "")
@@ -296,8 +296,8 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 
 	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
-	tracker.Update(+1, event)
-	tracker.Update(+1, event)
+	tracker.Update(+1, event, "1001", "testuser", "user", "")
+	tracker.Update(+1, event, "1001", "testuser", "user", "")
 
 	metric := gauge.WithLabelValues("lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", "")
 	val := readGaugeValue(t, metric)
@@ -306,7 +306,7 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 	}
 
 	// free one request
-	tracker.Update(-1, event)
+	tracker.Update(-1, event, "1001", "testuser", "user", "")
 	val = readGaugeValue(t, metric)
 	if val != 1 {
 		t.Fatalf("expected inflight=1, got %f", val)
@@ -484,4 +484,86 @@ func readGaugeValue(t *testing.T, metric prometheus.Gauge) float64 {
 		t.Fatalf("failed to read gauge value: %v", err)
 	}
 	return d.GetGauge().GetValue()
+}
+
+// readCounterValue extracts the float64 value from a Prometheus counter metric.
+func readCounterValue(t *testing.T, metric prometheus.Counter) float64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 1)
+	metric.(prometheus.Collector).Collect(ch)
+	m := <-ch
+	var d dto.Metric
+	if err := m.Write(&d); err != nil {
+		t.Fatalf("failed to read counter value: %v", err)
+	}
+	return d.GetCounter().GetValue()
+}
+
+// TestPtlRPCStartedCompletedCounters verifies that OpSendNewReq and OpFreeReq
+// events increment the started and completed counters monotonically, while
+// the inflight gauge reflects the net difference. Counter values must persist
+// even after the inflight gauge clamps at zero.
+func TestPtlRPCStartedCompletedCounters(t *testing.T) {
+	t.Parallel()
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+
+	resolver := testResolver()
+	slurmResolver := testSlurmResolver()
+	inflight := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+
+	sendEvt := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
+	freeEvt := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
+
+	// 3 sends, 2 frees → started=3, completed=2, inflight=1
+	processEvent(sendEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(sendEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(sendEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
+
+	// Positional order matches baseLabels.
+	labels := []string{"lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", ""}
+	started := exporter.RequestsStarted.WithLabelValues(labels...)
+	completed := exporter.RequestsCompleted.WithLabelValues(labels...)
+
+	if got := readCounterValue(t, started); got != 3 {
+		t.Fatalf("expected started=3, got %f", got)
+	}
+	if got := readCounterValue(t, completed); got != 2 {
+		t.Fatalf("expected completed=2, got %f", got)
+	}
+
+	gauge := exporter.Inflight.WithLabelValues(labels...)
+	if got := readGaugeValue(t, gauge); got != 1 {
+		t.Fatalf("expected inflight=1, got %f", got)
+	}
+
+	// Extra frees: inflight must clamp at zero, but completed counter must
+	// still increase monotonically. This is the key property that makes the
+	// counters useful independently of the gauge.
+	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
+
+	if got := readCounterValue(t, completed); got != 4 {
+		t.Fatalf("expected completed=4 after extra frees, got %f", got)
+	}
+	if got := readGaugeValue(t, gauge); got != 0 {
+		t.Fatalf("expected inflight clamped to 0, got %f", got)
+	}
+
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "lustre_client_ptlrpc_requests_started_total") {
+		t.Fatalf("missing started counter in rendered output: %s", text)
+	}
+	if !strings.Contains(text, "lustre_client_ptlrpc_requests_completed_total") {
+		t.Fatalf("missing completed counter in rendered output: %s", text)
+	}
 }
