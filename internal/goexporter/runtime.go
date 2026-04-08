@@ -132,8 +132,17 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 
 	switch event.Op {
 	case OpSendNewReq:
+		uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+		// Positional order must match baseLabels in prometheus.go.
+		exporter.RequestsStarted.WithLabelValues(
+			event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID,
+		).Inc()
 		inflight.Update(1, event)
 	case OpFreeReq:
+		uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+		exporter.RequestsCompleted.WithLabelValues(
+			event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID,
+		).Inc()
 		inflight.Update(-1, event)
 	}
 }

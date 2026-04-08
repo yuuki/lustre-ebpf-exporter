@@ -28,9 +28,11 @@ type PrometheusExporter struct {
 	server   *http.Server
 	listener net.Listener
 
-	AccessLatency *prometheus.HistogramVec
-	RPCWaitLat    *prometheus.HistogramVec
-	Inflight      *prometheus.GaugeVec
+	AccessLatency     *prometheus.HistogramVec
+	RPCWaitLat        *prometheus.HistogramVec
+	Inflight          *prometheus.GaugeVec
+	RequestsStarted   *prometheus.CounterVec
+	RequestsCompleted *prometheus.CounterVec
 }
 
 func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector) (*PrometheusExporter, error) {
@@ -49,10 +51,25 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
 			baseLabels,
 		),
+		RequestsStarted: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lustre_client_ptlrpc_requests_started_total",
+				Help: "Total ptlrpc requests sent (ptlrpc_send_new_req events)",
+			},
+			baseLabels,
+		),
+		RequestsCompleted: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lustre_client_ptlrpc_requests_completed_total",
+				Help: "Total ptlrpc requests freed (__ptlrpc_free_req events)",
+			},
+			baseLabels,
+		),
 	}
 
 	collectors := []prometheus.Collector{
 		exporter.AccessLatency, exporter.RPCWaitLat, exporter.Inflight,
+		exporter.RequestsStarted, exporter.RequestsCompleted,
 	}
 	if counterCollector != nil {
 		collectors = append(collectors, counterCollector)
