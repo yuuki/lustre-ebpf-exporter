@@ -282,6 +282,20 @@ static __always_inline int read_path_dev(struct path *path, __u32 *s_dev) {
   return read_dentry_dev(dentry, s_dev);
 }
 
+static __always_inline int track_llite_enter(void *map, __u32 s_dev) {
+  __u8 mount_idx = 0;
+  if (!lookup_mount(s_dev, &mount_idx)) {
+    return 0;
+  }
+  __u64 tid = current_tid();
+  struct start_info info = {};
+  fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
+  bpf_map_update_elem(map, &tid, &info, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
+  return 0;
+}
+
 static __always_inline int emit_from_start(void *ctx, struct start_info *info, __u8 plane, __u8 op, __u64 duration_us, __u64 size_bytes, __u64 request_ptr) {
   struct observer_event event = {};
   event.plane = plane;
@@ -317,85 +331,50 @@ SEC("kprobe/ll_lookup_nd")
 int ll_lookup_nd_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_inode_dev(inode, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_inode_dev(inode, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_lookup_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_lookup_map, s_dev);
 }
 
 SEC("kprobe/ll_file_open")
 int ll_file_open_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_inode_dev(inode, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_inode_dev(inode, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_open_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_open_map, s_dev);
 }
 
 SEC("kprobe/ll_file_read_iter")
 int ll_file_read_iter_enter(struct pt_regs *ctx) {
   struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_kiocb_dev(kiocb, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_read_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_read_map, s_dev);
 }
 
 SEC("kprobe/ll_file_write_iter")
 int ll_file_write_iter_enter(struct pt_regs *ctx) {
   struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_kiocb_dev(kiocb, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_write_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_write_map, s_dev);
 }
 
 SEC("kprobe/ll_fsync")
 int ll_fsync_enter(struct pt_regs *ctx) {
   struct file *file = (struct file *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_file_dev(file, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_file_dev(file, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_fsync_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_fsync_map, s_dev);
 }
 
 static __always_inline int emit_llite_event(void *ctx, struct start_info *info, __u8 op, long ret, int emit_bytes) {
@@ -572,20 +551,6 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
  * All probes here are optional (see internal/goexporter/runtime_linux.go) and
  * are skipped with a warning when the symbol is missing.
  */
-
-static __always_inline int track_llite_enter(void *map, __u32 s_dev) {
-  __u8 mount_idx = 0;
-  if (!lookup_mount(s_dev, &mount_idx)) {
-    return 0;
-  }
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
-}
 
 static __always_inline int finish_llite_op(void *ctx, void *map, __u8 op, long ret) {
   __u64 tid = current_tid();
