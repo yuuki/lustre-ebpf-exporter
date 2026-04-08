@@ -45,9 +45,14 @@ func (t *InflightTracker) Update(delta float64, event Event) {
 	}
 	t.mu.Unlock()
 
-	t.gauge.WithLabelValues(
-		event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID,
-	).Set(val)
+	t.gauge.WithLabelValues(baseLabelValues(event, uid, username, actorType, slurmJobID)...).Set(val)
+}
+
+// baseLabelValues returns label values in baseLabels positional order.
+// Centralizing this prevents drift between the gauge, counters, and any
+// future metric that shares the base label schema.
+func baseLabelValues(event Event, uid, username, actorType, slurmJobID string) []string {
+	return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID}
 }
 
 // labelKeySep is used to join positional label values into a cache key.
