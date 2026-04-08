@@ -71,15 +71,53 @@ func TestAccessIntentForOp(t *testing.T) {
 
 	namespaceReads := []string{OpClose, OpGetattr, OpGetxattr, OpStatfs}
 	for _, op := range namespaceReads {
-		if got := AccessIntentForOp(op); got != "namespace_read" {
-			t.Fatalf("op %q: expected namespace_read, got %q", op, got)
+		if got := AccessIntentForOp(op); got != IntentNamespaceRead {
+			t.Fatalf("op %q: expected %q, got %q", op, IntentNamespaceRead, got)
 		}
 	}
 	namespaceMutations := []string{OpMkdir, OpMknod, OpRename, OpRmdir, OpSetattr, OpSetxattr, OpUnlink}
 	for _, op := range namespaceMutations {
-		if got := AccessIntentForOp(op); got != "namespace_mutation" {
-			t.Fatalf("op %q: expected namespace_mutation, got %q", op, got)
+		if got := AccessIntentForOp(op); got != IntentNamespaceMutation {
+			t.Fatalf("op %q: expected %q, got %q", op, IntentNamespaceMutation, got)
 		}
+	}
+}
+
+func TestOpNameRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cases := map[uint8]string{
+		rawOpLookup:     OpLookup,
+		rawOpOpen:       OpOpen,
+		rawOpRead:       OpRead,
+		rawOpWrite:      OpWrite,
+		rawOpFsync:      OpFsync,
+		rawOpQueueWait:  OpQueueWait,
+		rawOpSendNewReq: OpSendNewReq,
+		rawOpFreeReq:    OpFreeReq,
+		rawOpClose:      OpClose,
+		rawOpGetattr:    OpGetattr,
+		rawOpGetxattr:   OpGetxattr,
+		rawOpMkdir:      OpMkdir,
+		rawOpMknod:      OpMknod,
+		rawOpRename:     OpRename,
+		rawOpRmdir:      OpRmdir,
+		rawOpSetattr:    OpSetattr,
+		rawOpSetxattr:   OpSetxattr,
+		rawOpStatfs:     OpStatfs,
+	}
+	for raw, want := range cases {
+		got, err := opName(raw)
+		if err != nil {
+			t.Errorf("opName(%d) returned error: %v", raw, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("opName(%d) = %q, want %q", raw, got, want)
+		}
+	}
+	if _, err := opName(255); err == nil {
+		t.Errorf("opName(255) should return error for unknown code")
 	}
 }
 
