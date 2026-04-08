@@ -542,14 +542,11 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
 /*
  * Metadata-op kprobe/kretprobe group.
  *
- * Kernel assumption: Linux 5.12+ (idmapped mounts).
- * The inode_operation hooks for mkdir/mknod/rename/rmdir/setattr/getattr take
- * a struct mnt_idmap* (or struct user_namespace*) as PARM1, with the
- * inode/dentry/path arriving in PARM2. On pre-5.12 kernels the parameter
- * positions shift, so s_dev extraction may fail and no event is emitted.
- *
- * All probes here are optional (see internal/goexporter/runtime_linux.go) and
- * are skipped with a warning when the symbol is missing.
+ * Kernel assumption: Linux 5.12+ idmapped-mount inode_operation signatures
+ * (mnt_idmap*/user_namespace* in PARM1, inode/dentry/path in PARM2). On
+ * older kernels the parameter positions shift and s_dev extraction silently
+ * yields no event. All probes are optional and graceful skips are handled
+ * by internal/goexporter/runtime_linux.go.
  */
 
 static __always_inline int finish_llite_op(void *ctx, void *map, __u8 op, long ret) {
@@ -564,7 +561,6 @@ static __always_inline int finish_llite_op(void *ctx, void *map, __u8 op, long r
   return 0;
 }
 
-/* close: int ll_file_release(struct inode *inode, struct file *file) */
 SEC("kprobe/ll_file_release")
 int ll_file_release_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
@@ -580,7 +576,6 @@ int ll_file_release_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_close_map, OP_CLOSE, PT_REGS_RC(ctx));
 }
 
-/* getattr: int ll_getattr(struct mnt_idmap *, const struct path *path, ...) */
 SEC("kprobe/ll_getattr")
 int ll_getattr_enter(struct pt_regs *ctx) {
   struct path *path = (struct path *)PT_REGS_PARM2(ctx);
@@ -596,8 +591,6 @@ int ll_getattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_getattr_map, OP_GETATTR, PT_REGS_RC(ctx));
 }
 
-/* getxattr: int ll_xattr_get_common(const struct xattr_handler *, struct dentry *,
- *                                    struct inode *inode, ...) */
 SEC("kprobe/ll_xattr_get_common")
 int ll_getxattr_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
@@ -613,8 +606,6 @@ int ll_getxattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_getxattr_map, OP_GETXATTR, PT_REGS_RC(ctx));
 }
 
-/* setxattr: int ll_xattr_set_common(const struct xattr_handler *, ...,
- *                                    struct dentry *, struct inode *inode, ...) */
 SEC("kprobe/ll_xattr_set_common")
 int ll_setxattr_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
@@ -630,7 +621,6 @@ int ll_setxattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_setxattr_map, OP_SETXATTR, PT_REGS_RC(ctx));
 }
 
-/* mkdir: int ll_mkdir(struct mnt_idmap *, struct inode *dir, struct dentry *, umode_t) */
 SEC("kprobe/ll_mkdir")
 int ll_mkdir_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
@@ -646,7 +636,6 @@ int ll_mkdir_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_mkdir_map, OP_MKDIR, PT_REGS_RC(ctx));
 }
 
-/* mknod: int ll_mknod(struct mnt_idmap *, struct inode *dir, struct dentry *, umode_t, dev_t) */
 SEC("kprobe/ll_mknod")
 int ll_mknod_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
@@ -662,8 +651,6 @@ int ll_mknod_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_mknod_map, OP_MKNOD, PT_REGS_RC(ctx));
 }
 
-/* rename: int ll_rename(struct mnt_idmap *, struct inode *old_dir, struct dentry *,
- *                        struct inode *new_dir, struct dentry *, unsigned int) */
 SEC("kprobe/ll_rename")
 int ll_rename_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
@@ -679,19 +666,12 @@ int ll_rename_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_rename_map, OP_RENAME, PT_REGS_RC(ctx));
 }
 
-/* rmdir: int ll_rmdir(struct inode *dir, struct dentry *) — on modern kernels
- *        PARM1 may be a mnt_idmap, but upstream Lustre 2.15 still ships the
- *        simple (dir, dchild) signature. To support both, try reading PARM2 as
- *        an inode first and fall back to PARM1 on failure. */
 SEC("kprobe/ll_rmdir")
 int ll_rmdir_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
   __u32 s_dev = 0;
   if (!read_inode_dev(inode, &s_dev)) {
-    inode = (struct inode *)PT_REGS_PARM1(ctx);
-    if (!read_inode_dev(inode, &s_dev)) {
-      return 0;
-    }
+    return 0;
   }
   return track_llite_enter(&ll_rmdir_map, s_dev);
 }
@@ -701,7 +681,6 @@ int ll_rmdir_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_rmdir_map, OP_RMDIR, PT_REGS_RC(ctx));
 }
 
-/* setattr: int ll_setattr(struct mnt_idmap *, struct dentry *, struct iattr *) */
 SEC("kprobe/ll_setattr")
 int ll_setattr_enter(struct pt_regs *ctx) {
   struct dentry *dentry = (struct dentry *)PT_REGS_PARM2(ctx);
@@ -717,7 +696,6 @@ int ll_setattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, &ll_setattr_map, OP_SETATTR, PT_REGS_RC(ctx));
 }
 
-/* statfs: int ll_statfs(struct dentry *de, struct kstatfs *sfs) */
 SEC("kprobe/ll_statfs")
 int ll_statfs_enter(struct pt_regs *ctx) {
   struct dentry *dentry = (struct dentry *)PT_REGS_PARM1(ctx);
