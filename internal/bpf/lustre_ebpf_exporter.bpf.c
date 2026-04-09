@@ -15,6 +15,16 @@
 #define OP_QUEUE_WAIT 6
 #define OP_SEND_NEW_REQ 7
 #define OP_FREE_REQ 8
+#define OP_CLOSE 9
+#define OP_GETATTR 10
+#define OP_GETXATTR 11
+#define OP_MKDIR 12
+#define OP_MKNOD 13
+#define OP_RENAME 14
+#define OP_RMDIR 15
+#define OP_SETATTR 16
+#define OP_SETXATTR 17
+#define OP_STATFS 18
 #define PLANE_LLITE 1
 #define PLANE_PTLRPC 2
 
@@ -49,6 +59,17 @@ struct file {
 
 struct kiocb {
   struct file *ki_filp;
+};
+
+struct vfsmount;
+
+struct dentry {
+  struct inode *d_inode;
+};
+
+struct path {
+  struct vfsmount *mnt;
+  struct dentry *dentry;
 };
 #pragma clang attribute pop
 
@@ -98,7 +119,12 @@ struct {
   __type(key, __u64);
   __type(value, struct start_info);
 } ll_lookup_map SEC(".maps"), ll_open_map SEC(".maps"), ll_read_map SEC(".maps"),
-    ll_write_map SEC(".maps"), ll_fsync_map SEC(".maps"), rpc_wait_map SEC(".maps");
+    ll_write_map SEC(".maps"), ll_fsync_map SEC(".maps"), rpc_wait_map SEC(".maps"),
+    ll_close_map SEC(".maps"), ll_getattr_map SEC(".maps"),
+    ll_getxattr_map SEC(".maps"), ll_setxattr_map SEC(".maps"),
+    ll_mkdir_map SEC(".maps"), ll_mknod_map SEC(".maps"),
+    ll_rename_map SEC(".maps"), ll_rmdir_map SEC(".maps"),
+    ll_setattr_map SEC(".maps"), ll_statfs_map SEC(".maps");
 
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
@@ -152,7 +178,12 @@ static __always_inline __u8 classify_actor_type(const char comm[TASK_COMM_LEN]) 
 
 static __always_inline __u8 intent_for_op(__u8 op) {
   switch (op) {
-  case OP_LOOKUP: case OP_OPEN:  return INTENT_NAMESPACE_READ;
+  case OP_LOOKUP: case OP_OPEN:
+  case OP_CLOSE: case OP_GETATTR: case OP_GETXATTR: case OP_STATFS:
+    return INTENT_NAMESPACE_READ;
+  case OP_MKDIR: case OP_MKNOD: case OP_RENAME: case OP_RMDIR:
+  case OP_SETATTR: case OP_SETXATTR:
+    return INTENT_NAMESPACE_MUTATION;
   case OP_READ:                  return INTENT_DATA_READ;
   case OP_WRITE:                 return INTENT_DATA_WRITE;
   case OP_FSYNC:                 return INTENT_SYNC;
@@ -235,6 +266,36 @@ static __always_inline int read_kiocb_dev(struct kiocb *kiocb, __u32 *s_dev) {
   return read_file_dev(file, s_dev);
 }
 
+static __always_inline int read_dentry_dev(struct dentry *dentry, __u32 *s_dev) {
+  if (!dentry) {
+    return 0;
+  }
+  struct inode *inode = BPF_CORE_READ(dentry, d_inode);
+  return read_inode_dev(inode, s_dev);
+}
+
+static __always_inline int read_path_dev(struct path *path, __u32 *s_dev) {
+  if (!path) {
+    return 0;
+  }
+  struct dentry *dentry = BPF_CORE_READ(path, dentry);
+  return read_dentry_dev(dentry, s_dev);
+}
+
+static __always_inline int track_llite_enter(void *map, __u32 s_dev) {
+  __u8 mount_idx = 0;
+  if (!lookup_mount(s_dev, &mount_idx)) {
+    return 0;
+  }
+  __u64 tid = current_tid();
+  struct start_info info = {};
+  fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
+  bpf_map_update_elem(map, &tid, &info, BPF_ANY);
+  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
+  return 0;
+}
+
 static __always_inline int emit_from_start(void *ctx, struct start_info *info, __u8 plane, __u8 op, __u64 duration_us, __u64 size_bytes, __u64 request_ptr) {
   struct observer_event event = {};
   event.plane = plane;
@@ -270,85 +331,50 @@ SEC("kprobe/ll_lookup_nd")
 int ll_lookup_nd_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_inode_dev(inode, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_inode_dev(inode, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_lookup_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_lookup_map, s_dev);
 }
 
 SEC("kprobe/ll_file_open")
 int ll_file_open_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_inode_dev(inode, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_inode_dev(inode, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_open_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_open_map, s_dev);
 }
 
 SEC("kprobe/ll_file_read_iter")
 int ll_file_read_iter_enter(struct pt_regs *ctx) {
   struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_kiocb_dev(kiocb, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_read_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_read_map, s_dev);
 }
 
 SEC("kprobe/ll_file_write_iter")
 int ll_file_write_iter_enter(struct pt_regs *ctx) {
   struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_kiocb_dev(kiocb, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_kiocb_dev(kiocb, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_write_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_write_map, s_dev);
 }
 
 SEC("kprobe/ll_fsync")
 int ll_fsync_enter(struct pt_regs *ctx) {
   struct file *file = (struct file *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
-  __u64 tid = current_tid();
-  struct start_info info = {};
-  __u8 mount_idx = 0;
-  if (!read_file_dev(file, &s_dev) || !lookup_mount(s_dev, &mount_idx)) {
+  if (!read_file_dev(file, &s_dev)) {
     return 0;
   }
-  fill_start_info(&info, 0);
-  info.mount_idx = mount_idx;
-  bpf_map_update_elem(&ll_fsync_map, &tid, &info, BPF_ANY);
-  bpf_map_update_elem(&selected_mount_tids, &tid, &mount_idx, BPF_ANY);
-  return 0;
+  return track_llite_enter(&ll_fsync_map, s_dev);
 }
 
 static __always_inline int emit_llite_event(void *ctx, struct start_info *info, __u8 op, long ret, int emit_bytes) {
@@ -511,6 +537,178 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr);
   bpf_map_delete_elem(&tracked_reqs, &req_ptr);
   return 0;
+}
+
+/*
+ * Metadata-op kprobe/kretprobe group.
+ *
+ * Kernel assumption: Linux 5.12+ idmapped-mount inode_operation signatures
+ * (mnt_idmap or user_namespace pointer in PARM1, inode/dentry/path in
+ * PARM2). On older kernels the parameter positions shift and s_dev
+ * extraction silently yields no event. All probes are optional and
+ * graceful skips are handled by internal/goexporter/runtime_linux.go.
+ */
+
+static __always_inline int finish_llite_op(void *ctx, void *map, __u8 op, long ret) {
+  __u64 tid = current_tid();
+  struct start_info *info = bpf_map_lookup_elem(map, &tid);
+  if (!info) {
+    return 0;
+  }
+  emit_llite_event(ctx, info, op, ret, 0);
+  bpf_map_delete_elem(map, &tid);
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  return 0;
+}
+
+SEC("kprobe/ll_file_release")
+int ll_file_release_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_close_map, s_dev);
+}
+
+SEC("kretprobe/ll_file_release")
+int ll_file_release_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_close_map, OP_CLOSE, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_getattr")
+int ll_getattr_enter(struct pt_regs *ctx) {
+  struct path *path = (struct path *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_path_dev(path, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_getattr_map, s_dev);
+}
+
+SEC("kretprobe/ll_getattr")
+int ll_getattr_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_getattr_map, OP_GETATTR, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_xattr_get_common")
+int ll_getxattr_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_getxattr_map, s_dev);
+}
+
+SEC("kretprobe/ll_xattr_get_common")
+int ll_getxattr_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_getxattr_map, OP_GETXATTR, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_xattr_set_common")
+int ll_setxattr_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_setxattr_map, s_dev);
+}
+
+SEC("kretprobe/ll_xattr_set_common")
+int ll_setxattr_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_setxattr_map, OP_SETXATTR, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_mkdir")
+int ll_mkdir_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_mkdir_map, s_dev);
+}
+
+SEC("kretprobe/ll_mkdir")
+int ll_mkdir_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_mkdir_map, OP_MKDIR, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_mknod")
+int ll_mknod_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_mknod_map, s_dev);
+}
+
+SEC("kretprobe/ll_mknod")
+int ll_mknod_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_mknod_map, OP_MKNOD, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_rename")
+int ll_rename_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_rename_map, s_dev);
+}
+
+SEC("kretprobe/ll_rename")
+int ll_rename_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_rename_map, OP_RENAME, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_rmdir")
+int ll_rmdir_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_rmdir_map, s_dev);
+}
+
+SEC("kretprobe/ll_rmdir")
+int ll_rmdir_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_rmdir_map, OP_RMDIR, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_setattr")
+int ll_setattr_enter(struct pt_regs *ctx) {
+  struct dentry *dentry = (struct dentry *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_dentry_dev(dentry, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_setattr_map, s_dev);
+}
+
+SEC("kretprobe/ll_setattr")
+int ll_setattr_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_setattr_map, OP_SETATTR, PT_REGS_RC(ctx));
+}
+
+SEC("kprobe/ll_statfs")
+int ll_statfs_enter(struct pt_regs *ctx) {
+  struct dentry *dentry = (struct dentry *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_dentry_dev(dentry, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(&ll_statfs_map, s_dev);
+}
+
+SEC("kretprobe/ll_statfs")
+int ll_statfs_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, &ll_statfs_map, OP_STATFS, PT_REGS_RC(ctx));
 }
 
 char LICENSE[] SEC("license") = "GPL";
