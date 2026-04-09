@@ -121,7 +121,7 @@ struct {
 
 struct {
   __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, 32768);
+  __uint(max_entries, 65536);
   __type(key, struct inflight_key);
   __type(value, struct start_info);
 } inflight_map SEC(".maps");
@@ -390,8 +390,20 @@ static __always_inline int emit_llite_event(void *ctx, struct start_info *info, 
   return 0;
 }
 
-SEC("kretprobe/" SYSCALL_OPENAT)
-int sys_exit_openat(struct pt_regs *ctx) {
+static __always_inline int finish_llite_op(void *ctx, __u8 op, long ret, int emit_bytes) {
+  __u64 tid = current_tid();
+  struct inflight_key key = {.tid = tid, .op = op};
+  struct start_info *info = bpf_map_lookup_elem(&inflight_map, &key);
+  if (!info) {
+    return 0;
+  }
+  emit_llite_event(ctx, info, op, ret, emit_bytes);
+  bpf_map_delete_elem(&inflight_map, &key);
+  bpf_map_delete_elem(&selected_mount_tids, &tid);
+  return 0;
+}
+
+static __always_inline int finish_openat(void *ctx) {
   __u64 tid = current_tid();
   long ret = PT_REGS_RC(ctx);
   struct inflight_key lk = {.tid = tid, .op = OP_LOOKUP};
@@ -408,71 +420,31 @@ int sys_exit_openat(struct pt_regs *ctx) {
   }
   bpf_map_delete_elem(&selected_mount_tids, &tid);
   return 0;
+}
+
+SEC("kretprobe/" SYSCALL_OPENAT)
+int sys_exit_openat(struct pt_regs *ctx) {
+  return finish_openat(ctx);
 }
 
 SEC("kretprobe/" SYSCALL_OPENAT2)
 int sys_exit_openat2(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  long ret = PT_REGS_RC(ctx);
-  struct inflight_key lk = {.tid = tid, .op = OP_LOOKUP};
-  struct inflight_key ok = {.tid = tid, .op = OP_OPEN};
-  struct start_info *lookup_info = bpf_map_lookup_elem(&inflight_map, &lk);
-  struct start_info *open_info = bpf_map_lookup_elem(&inflight_map, &ok);
-  if (lookup_info) {
-    emit_llite_event(ctx, lookup_info, OP_LOOKUP, ret, 0);
-    bpf_map_delete_elem(&inflight_map, &lk);
-  }
-  if (open_info) {
-    emit_llite_event(ctx, open_info, OP_OPEN, ret, 0);
-    bpf_map_delete_elem(&inflight_map, &ok);
-  }
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
-  return 0;
+  return finish_openat(ctx);
 }
 
 SEC("kretprobe/" SYSCALL_READ)
 int sys_exit_read(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  long ret = PT_REGS_RC(ctx);
-  struct inflight_key key = {.tid = tid, .op = OP_READ};
-  struct start_info *info = bpf_map_lookup_elem(&inflight_map, &key);
-  if (!info) {
-    return 0;
-  }
-  emit_llite_event(ctx, info, OP_READ, ret, 1);
-  bpf_map_delete_elem(&inflight_map, &key);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
-  return 0;
+  return finish_llite_op(ctx, OP_READ, PT_REGS_RC(ctx), 1);
 }
 
 SEC("kretprobe/" SYSCALL_WRITE)
 int sys_exit_write(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  long ret = PT_REGS_RC(ctx);
-  struct inflight_key key = {.tid = tid, .op = OP_WRITE};
-  struct start_info *info = bpf_map_lookup_elem(&inflight_map, &key);
-  if (!info) {
-    return 0;
-  }
-  emit_llite_event(ctx, info, OP_WRITE, ret, 1);
-  bpf_map_delete_elem(&inflight_map, &key);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
-  return 0;
+  return finish_llite_op(ctx, OP_WRITE, PT_REGS_RC(ctx), 1);
 }
 
 SEC("kretprobe/" SYSCALL_FSYNC)
 int sys_exit_fsync(struct pt_regs *ctx) {
-  __u64 tid = current_tid();
-  long ret = PT_REGS_RC(ctx);
-  struct inflight_key key = {.tid = tid, .op = OP_FSYNC};
-  struct start_info *info = bpf_map_lookup_elem(&inflight_map, &key);
-  if (!info) {
-    return 0;
-  }
-  emit_llite_event(ctx, info, OP_FSYNC, ret, 0);
-  bpf_map_delete_elem(&inflight_map, &key);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
-  return 0;
+  return finish_llite_op(ctx, OP_FSYNC, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ptlrpc_send_new_req")
@@ -559,19 +531,6 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
  * graceful skips are handled by internal/goexporter/runtime_linux.go.
  */
 
-static __always_inline int finish_llite_op(void *ctx, __u8 op, long ret) {
-  __u64 tid = current_tid();
-  struct inflight_key key = {.tid = tid, .op = op};
-  struct start_info *info = bpf_map_lookup_elem(&inflight_map, &key);
-  if (!info) {
-    return 0;
-  }
-  emit_llite_event(ctx, info, op, ret, 0);
-  bpf_map_delete_elem(&inflight_map, &key);
-  bpf_map_delete_elem(&selected_mount_tids, &tid);
-  return 0;
-}
-
 SEC("kprobe/ll_file_release")
 int ll_file_release_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
@@ -584,7 +543,7 @@ int ll_file_release_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_file_release")
 int ll_file_release_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_CLOSE, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_CLOSE, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_getattr")
@@ -599,7 +558,7 @@ int ll_getattr_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_getattr")
 int ll_getattr_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_GETATTR, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_GETATTR, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_xattr_get_common")
@@ -614,7 +573,7 @@ int ll_getxattr_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_xattr_get_common")
 int ll_getxattr_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_GETXATTR, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_GETXATTR, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_xattr_set_common")
@@ -629,7 +588,7 @@ int ll_setxattr_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_xattr_set_common")
 int ll_setxattr_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_SETXATTR, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_SETXATTR, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_mkdir")
@@ -644,7 +603,7 @@ int ll_mkdir_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_mkdir")
 int ll_mkdir_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_MKDIR, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_MKDIR, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_mknod")
@@ -659,7 +618,7 @@ int ll_mknod_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_mknod")
 int ll_mknod_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_MKNOD, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_MKNOD, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_rename")
@@ -674,7 +633,7 @@ int ll_rename_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_rename")
 int ll_rename_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_RENAME, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_RENAME, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_rmdir")
@@ -689,7 +648,7 @@ int ll_rmdir_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_rmdir")
 int ll_rmdir_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_RMDIR, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_RMDIR, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_setattr")
@@ -704,7 +663,7 @@ int ll_setattr_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_setattr")
 int ll_setattr_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_SETATTR, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_SETATTR, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_statfs")
@@ -719,7 +678,7 @@ int ll_statfs_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_statfs")
 int ll_statfs_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_STATFS, PT_REGS_RC(ctx));
+  return finish_llite_op(ctx, OP_STATFS, PT_REGS_RC(ctx), 0);
 }
 
 char LICENSE[] SEC("license") = "GPL";
