@@ -32,6 +32,12 @@ type BPFCounterCollector struct {
 	// pid->jobid mapping into a BPF LRU map and include job_id in agg_key.
 	slurmResolver *slurm.Resolver
 
+	// Accumulator maps grow monotonically: one entry per unique label
+	// combination observed. BPF-side maps are bounded (max_entries), but
+	// these Go-side maps are not. In practice, cardinality is constrained
+	// by the small label domains (op × actor_type × intent × errno_class),
+	// but operators should monitor map sizes under sustained high-error
+	// workloads.
 	lliteAcc map[string]*lliteAccum
 	rpcAcc   map[string]*rpcAccum
 
@@ -348,7 +354,7 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		const slurmJobID = ""
 		eventName := rpcEventTypeName(key.Reason)
 		if eventName == "" {
-			eventName = "unknown"
+			eventName = unknownRPCEvent
 		}
 		vals := [8]string{
 			fsName,

@@ -119,6 +119,8 @@ const (
 	RPCEventRestart = "restart"
 	RPCEventExpire  = "expire"
 	RPCEventNotconn = "notconn"
+
+	unknownRPCEvent = "unknown"
 )
 
 const (
