@@ -332,10 +332,10 @@ def test_go_bpf_uses_llite_entry_and_syscall_exit_correlation() -> None:
     program = read_text("internal/bpf/lustre_ebpf_exporter.bpf.c")
     runtime_linux = read_text("internal/goexporter/runtime_linux.go")
 
-    assert "bpf_map_update_elem(&ll_lookup_map" in program
-    assert "bpf_map_update_elem(&ll_open_map" in program
-    assert "bpf_map_update_elem(&ll_read_map" in program
-    assert "bpf_map_update_elem(&ll_write_map" in program
+    assert "track_llite_enter(OP_LOOKUP" in program
+    assert "track_llite_enter(OP_OPEN" in program
+    assert "track_llite_enter(OP_READ" in program
+    assert "track_llite_enter(OP_WRITE" in program
     assert 'SEC("kretprobe/" SYSCALL_OPENAT)' in program
     assert 'SEC("kretprobe/" SYSCALL_READ)' in program
     assert 'SEC("kretprobe/" SYSCALL_WRITE)' in program
