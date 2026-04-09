@@ -40,6 +40,20 @@
 #define INTENT_SYNC               4
 #define INTENT_UNKNOWN            0xFF
 
+#define ERRNO_CLASS_NONE     0
+#define ERRNO_CLASS_TIMEOUT  1
+#define ERRNO_CLASS_NOTCONN  2
+#define ERRNO_CLASS_PERM     3
+#define ERRNO_CLASS_NOTFOUND 4
+#define ERRNO_CLASS_IO       5
+#define ERRNO_CLASS_AGAIN    6
+#define ERRNO_CLASS_OTHER    7
+
+#define RPC_EVENT_RESEND   1
+#define RPC_EVENT_RESTART  2
+#define RPC_EVENT_EXPIRE   3
+#define RPC_EVENT_NOTCONN  4
+
 typedef unsigned char __u8;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
@@ -96,7 +110,8 @@ struct inflight_key {
 struct observer_event {
   __u8 plane;
   __u8 op;
-  __u8 pad[6];
+  __u8 errno_class;
+  __u8 pad[5];
   __u32 uid;
   __u32 pid;
   __u32 mount_idx;
@@ -160,6 +175,70 @@ struct {
   __type(key, struct agg_key);
   __type(value, struct counter_val);
 } rpc_counters SEC(".maps");
+
+struct error_agg_key {
+  __u32 uid;
+  __u8  op;
+  __u8  mount_idx;
+  __u8  actor_type;
+  __u8  intent;
+  __u8  reason;
+  __u8  pad[7];
+  char  comm[TASK_COMM_LEN];
+};
+
+struct error_counter_val {
+  __u64 ops_count;
+};
+
+struct {
+  __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+  __uint(max_entries, 1024);
+  __type(key, struct error_agg_key);
+  __type(value, struct error_counter_val);
+} llite_error_counters SEC(".maps");
+
+struct {
+  __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+  __uint(max_entries, 512);
+  __type(key, struct error_agg_key);
+  __type(value, struct error_counter_val);
+} rpc_error_counters SEC(".maps");
+
+static __always_inline __u8 classify_errno(long ret) {
+  if (ret >= 0) return ERRNO_CLASS_NONE;
+  long e = -ret;
+  switch (e) {
+  case 110: return ERRNO_CLASS_TIMEOUT;
+  case 107: return ERRNO_CLASS_NOTCONN;
+  case 1: case 13: return ERRNO_CLASS_PERM;
+  case 2: case 20: return ERRNO_CLASS_NOTFOUND;
+  case 5: case 121: return ERRNO_CLASS_IO;
+  case 11: return ERRNO_CLASS_AGAIN;
+  default: return ERRNO_CLASS_OTHER;
+  }
+}
+
+static __always_inline void increment_error_counter(void *map,
+    struct start_info *info, __u8 op, __u8 actor_type, __u8 intent,
+    __u8 reason) {
+  struct error_agg_key key = {};
+  key.uid = info->uid;
+  key.op = op;
+  key.mount_idx = info->mount_idx;
+  key.actor_type = actor_type;
+  key.intent = intent;
+  key.reason = reason;
+  __builtin_memcpy(key.comm, info->comm, TASK_COMM_LEN);
+
+  struct error_counter_val *val = bpf_map_lookup_elem(map, &key);
+  if (val) {
+    __sync_fetch_and_add(&val->ops_count, 1);
+  } else {
+    struct error_counter_val new_val = {.ops_count = 1};
+    bpf_map_update_elem(map, &key, &new_val, BPF_NOEXIST);
+  }
+}
 
 static __always_inline __u8 classify_actor_type(const char comm[TASK_COMM_LEN]) {
   if (comm[0]=='p' && comm[1]=='t' && comm[2]=='l' && comm[3]=='r' &&
@@ -297,10 +376,11 @@ static __always_inline int track_llite_enter(__u8 op, __u32 s_dev) {
   return 0;
 }
 
-static __always_inline int emit_from_start(void *ctx, struct start_info *info, __u8 plane, __u8 op, __u64 duration_us, __u64 size_bytes, __u64 request_ptr) {
+static __always_inline int emit_from_start(void *ctx, struct start_info *info, __u8 plane, __u8 op, __u64 duration_us, __u64 size_bytes, __u64 request_ptr, __u8 errno_class) {
   struct observer_event event = {};
   event.plane = plane;
   event.op = op;
+  event.errno_class = errno_class;
   event.uid = info->uid;
   event.pid = info->pid;
   event.mount_idx = (__u32)info->mount_idx;
@@ -384,9 +464,16 @@ static __always_inline int emit_llite_event(void *ctx, struct start_info *info, 
 
   __u8 actor_type = classify_actor_type(info->comm);
   __u8 intent = intent_for_op(op);
+  __u8 errno_class = classify_errno(ret);
+
   increment_counter(&llite_counters, info, op, actor_type, intent, size_bytes);
 
-  emit_from_start(ctx, info, PLANE_LLITE, op, duration_us, size_bytes, 0);
+  if (errno_class != ERRNO_CLASS_NONE) {
+    increment_error_counter(&llite_error_counters, info, op,
+        actor_type, intent, errno_class);
+  }
+
+  emit_from_start(ctx, info, PLANE_LLITE, op, duration_us, size_bytes, 0, errno_class);
   return 0;
 }
 
@@ -460,7 +547,7 @@ int ptlrpc_send_new_req_enter(struct pt_regs *ctx) {
   fill_start_info(&info, req_ptr);
   info.mount_idx = mount_idx;
   bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &mount_idx, BPF_ANY);
-  emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr);
+  emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr, 0);
   return 0;
 }
 
@@ -501,7 +588,7 @@ int ptlrpc_queue_wait_exit(struct pt_regs *ctx) {
   __u8 actor_type = classify_actor_type(info->comm);
   increment_counter(&rpc_counters, info, OP_QUEUE_WAIT, actor_type, INTENT_UNKNOWN, 0);
 
-  emit_from_start(ctx, info, PLANE_PTLRPC, OP_QUEUE_WAIT, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, info->request_ptr);
+  emit_from_start(ctx, info, PLANE_PTLRPC, OP_QUEUE_WAIT, (bpf_ktime_get_ns() - info->start_ns) / 1000, 0, info->request_ptr, 0);
   bpf_map_delete_elem(&inflight_map, &key);
   return 0;
 }
@@ -516,7 +603,7 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
   }
   fill_start_info(&info, req_ptr);
   info.mount_idx = *tracked;
-  emit_from_start(ctx, &info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr);
+  emit_from_start(ctx, &info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr, 0);
   bpf_map_delete_elem(&tracked_reqs, &req_ptr);
   return 0;
 }
@@ -679,6 +766,58 @@ int ll_statfs_enter(struct pt_regs *ctx) {
 SEC("kretprobe/ll_statfs")
 int ll_statfs_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, OP_STATFS, PT_REGS_RC(ctx), 0);
+}
+
+/*
+ * PtlRPC error/recovery event kprobes.
+ *
+ * These entry-only probes fire on PtlRPC recovery actions: resend,
+ * restart, request expiry, and ENOTCONN handling. All are optional
+ * and degrade gracefully when the symbols are missing.
+ */
+
+static __always_inline int record_rpc_error_event(void *ctx, __u8 event_type, __u64 req_ptr) {
+  __u8 mount_idx = 0;
+  __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
+  if (tracked) {
+    mount_idx = *tracked;
+  } else {
+    __u64 tid = current_tid();
+    __u8 *midx = bpf_map_lookup_elem(&selected_mount_tids, &tid);
+    if (!midx) {
+      return 0;
+    }
+    mount_idx = *midx;
+  }
+
+  struct start_info info = {};
+  fill_start_info(&info, req_ptr);
+  info.mount_idx = mount_idx;
+
+  __u8 actor_type = classify_actor_type(info.comm);
+  increment_error_counter(&rpc_error_counters, &info, 0,
+      actor_type, INTENT_UNKNOWN, event_type);
+  return 0;
+}
+
+SEC("kprobe/ptlrpc_resend_req")
+int ptlrpc_resend_req_enter(struct pt_regs *ctx) {
+  return record_rpc_error_event(ctx, RPC_EVENT_RESEND, PT_REGS_PARM1(ctx));
+}
+
+SEC("kprobe/ptlrpc_restart_req")
+int ptlrpc_restart_req_enter(struct pt_regs *ctx) {
+  return record_rpc_error_event(ctx, RPC_EVENT_RESTART, PT_REGS_PARM1(ctx));
+}
+
+SEC("kprobe/ptlrpc_expire_one_request")
+int ptlrpc_expire_one_request_enter(struct pt_regs *ctx) {
+  return record_rpc_error_event(ctx, RPC_EVENT_EXPIRE, PT_REGS_PARM1(ctx));
+}
+
+SEC("kprobe/ptlrpc_request_handle_notconn")
+int ptlrpc_request_handle_notconn_enter(struct pt_regs *ctx) {
+  return record_rpc_error_event(ctx, RPC_EVENT_NOTCONN, PT_REGS_PARM1(ctx));
 }
 
 char LICENSE[] SEC("license") = "GPL";

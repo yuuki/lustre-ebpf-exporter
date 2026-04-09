@@ -550,6 +550,116 @@ func readCounterValue(t *testing.T, metric prometheus.Counter) float64 {
 	return d.GetCounter().GetValue()
 }
 
+func TestErrnoClassName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  uint8
+		want string
+	}{
+		{rawErrnoClassNone, ""},
+		{rawErrnoClassTimeout, ErrnoClassTimeout},
+		{rawErrnoClassNotconn, ErrnoClassNotconn},
+		{rawErrnoClassPerm, ErrnoClassPerm},
+		{rawErrnoClassNotfound, ErrnoClassNotfound},
+		{rawErrnoClassIO, ErrnoClassIO},
+		{rawErrnoClassAgain, ErrnoClassAgain},
+		{rawErrnoClassOther, ErrnoClassOther},
+		{255, ErrnoClassOther},
+	}
+	for _, tc := range cases {
+		if got := errnoClassName(tc.raw); got != tc.want {
+			t.Errorf("errnoClassName(%d) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestRpcEventTypeName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		raw  uint8
+		want string
+	}{
+		{rawRPCEventResend, RPCEventResend},
+		{rawRPCEventRestart, RPCEventRestart},
+		{rawRPCEventExpire, RPCEventExpire},
+		{rawRPCEventNotconn, RPCEventNotconn},
+		{0, ""},
+		{99, ""},
+	}
+	for _, tc := range cases {
+		if got := rpcEventTypeName(tc.raw); got != tc.want {
+			t.Errorf("rpcEventTypeName(%d) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestParseObserverEventErrnoClass(t *testing.T) {
+	t.Parallel()
+
+	sample := make([]byte, 64)
+	sample[0] = rawPlaneLLite
+	sample[1] = rawOpOpen
+	sample[2] = rawErrnoClassNotfound
+	binary.LittleEndian.PutUint32(sample[8:12], 1001)
+	binary.LittleEndian.PutUint32(sample[12:16], 4321)
+	binary.LittleEndian.PutUint32(sample[16:20], 0)
+	binary.LittleEndian.PutUint64(sample[24:32], 100)
+	copy(sample[48:64], []byte("cat\x00"))
+
+	event, err := parseObserverEvent(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.ErrnoClass != ErrnoClassNotfound {
+		t.Fatalf("expected errno_class=%q, got %q", ErrnoClassNotfound, event.ErrnoClass)
+	}
+	if event.Op != OpOpen {
+		t.Fatalf("expected op=%q, got %q", OpOpen, event.Op)
+	}
+}
+
+func TestParseObserverEventErrnoClassZero(t *testing.T) {
+	t.Parallel()
+
+	sample := make([]byte, 64)
+	sample[0] = rawPlaneLLite
+	sample[1] = rawOpWrite
+	// sample[2] = 0 (default, no error)
+	binary.LittleEndian.PutUint32(sample[8:12], 1001)
+	binary.LittleEndian.PutUint64(sample[24:32], 250)
+	copy(sample[48:64], []byte("dd\x00"))
+
+	event, err := parseObserverEvent(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.ErrnoClass != "" {
+		t.Fatalf("expected empty errno_class for success, got %q", event.ErrnoClass)
+	}
+}
+
+func TestBpfErrorAggKeySize(t *testing.T) {
+	t.Parallel()
+
+	var key bpfErrorAggKey
+	size := int(unsafe.Sizeof(key))
+	if size != 32 {
+		t.Fatalf("bpfErrorAggKey size = %d, want 32 (must match BPF struct)", size)
+	}
+}
+
+func TestBpfErrorCounterValSize(t *testing.T) {
+	t.Parallel()
+
+	var val bpfErrorCounterVal
+	size := int(unsafe.Sizeof(val))
+	if size != 8 {
+		t.Fatalf("bpfErrorCounterVal size = %d, want 8 (must match BPF struct)", size)
+	}
+}
+
 // TestPtlRPCStartedCompletedCounters verifies that OpSendNewReq and OpFreeReq
 // events increment the started and completed counters monotonically, while
 // the inflight gauge reflects the net difference. Counter values must persist

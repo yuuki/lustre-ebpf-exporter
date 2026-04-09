@@ -35,9 +35,16 @@ type BPFCounterCollector struct {
 	lliteAcc map[string]*lliteAccum
 	rpcAcc   map[string]*rpcAccum
 
-	accessOpsDesc  *prometheus.Desc
-	dataBytesDesc  *prometheus.Desc
-	rpcWaitOpsDesc *prometheus.Desc
+	lliteErrorMap *ebpf.Map
+	rpcErrorMap   *ebpf.Map
+	lliteErrorAcc map[string]*lliteErrorAccum
+	rpcErrorAcc   map[string]*rpcErrorAccum
+
+	accessOpsDesc   *prometheus.Desc
+	dataBytesDesc   *prometheus.Desc
+	rpcWaitOpsDesc  *prometheus.Desc
+	accessErrorsDesc *prometheus.Desc
+	rpcErrorsDesc    *prometheus.Desc
 }
 
 // lliteAccum stores label values in lliteLabels order:
@@ -55,15 +62,33 @@ type rpcAccum struct {
 	values   [8]string
 }
 
-func NewBPFCounterCollector(lliteMap, rpcMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *BPFCounterCollector {
+// lliteErrorAccum stores label values in lliteErrLabels order:
+// fs, mount, access_intent, op, uid, username, process, actor_type, slurm_job_id, errno_class.
+type lliteErrorAccum struct {
+	opsCount float64
+	values   [10]string
+}
+
+// rpcErrorAccum stores label values in rpcErrorLabels order:
+// fs, mount, event, uid, username, process, actor_type, slurm_job_id.
+type rpcErrorAccum struct {
+	opsCount float64
+	values   [8]string
+}
+
+func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *BPFCounterCollector {
 	return &BPFCounterCollector{
 		lliteMap:      lliteMap,
 		rpcMap:        rpcMap,
+		lliteErrorMap: lliteErrorMap,
+		rpcErrorMap:   rpcErrorMap,
 		mountInfos:    mountInfos,
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
 		lliteAcc:      map[string]*lliteAccum{},
 		rpcAcc:        map[string]*rpcAccum{},
+		lliteErrorAcc: map[string]*lliteErrorAccum{},
+		rpcErrorAcc:   map[string]*rpcErrorAccum{},
 		accessOpsDesc: prometheus.NewDesc(
 			"lustre_client_access_operations_total",
 			"Aggregated llite access operation count",
@@ -79,6 +104,16 @@ func NewBPFCounterCollector(lliteMap, rpcMap *ebpf.Map, mountInfos []MountInfo, 
 			"Aggregated ptlrpc queue wait count",
 			ptlrpcLabels, nil,
 		),
+		accessErrorsDesc: prometheus.NewDesc(
+			"lustre_client_operation_errors_total",
+			"Aggregated llite operation error count by errno class",
+			lliteErrLabels, nil,
+		),
+		rpcErrorsDesc: prometheus.NewDesc(
+			"lustre_client_rpc_errors_total",
+			"Aggregated ptlrpc error/recovery event count",
+			rpcErrorLabels, nil,
+		),
 	}
 }
 
@@ -87,6 +122,8 @@ func (c *BPFCounterCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.accessOpsDesc
 	ch <- c.dataBytesDesc
 	ch <- c.rpcWaitOpsDesc
+	ch <- c.accessErrorsDesc
+	ch <- c.rpcErrorsDesc
 }
 
 // Collect implements prometheus.Collector. Called at scrape time.
@@ -112,6 +149,22 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.rpcWaitOpsDesc, prometheus.CounterValue, acc.opsCount,
+				acc.values[:]...,
+			)
+		}
+	}
+	for _, acc := range c.lliteErrorAcc {
+		if acc.opsCount > 0 {
+			ch <- prometheus.MustNewConstMetric(
+				c.accessErrorsDesc, prometheus.CounterValue, acc.opsCount,
+				acc.values[:]...,
+			)
+		}
+	}
+	for _, acc := range c.rpcErrorAcc {
+		if acc.opsCount > 0 {
+			ch <- prometheus.MustNewConstMetric(
+				c.rpcErrorsDesc, prometheus.CounterValue, acc.opsCount,
 				acc.values[:]...,
 			)
 		}
@@ -145,6 +198,12 @@ func (c *BPFCounterCollector) DrainOnce() {
 	}
 	if c.rpcMap != nil {
 		c.drainRPC(c.rpcMap)
+	}
+	if c.lliteErrorMap != nil {
+		c.drainLLiteErrors(c.lliteErrorMap)
+	}
+	if c.rpcErrorMap != nil {
+		c.drainRPCErrors(c.rpcErrorMap)
 	}
 }
 
@@ -225,6 +284,88 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 		if !ok {
 			acc = &rpcAccum{values: vals}
 			c.rpcAcc[accKey] = acc
+		}
+		acc.opsCount += float64(total.OpsCount)
+	})
+}
+
+// drainErrorCounterMap iterates a BPF error counter map (error_agg_key →
+// error_counter_val), sums per-CPU values, and calls onEntry for each key.
+func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bpfErrorCounterVal)) {
+	var keysToDelete []bpfErrorAggKey
+	var key bpfErrorAggKey
+	var values []bpfErrorCounterVal
+	iter := m.Iterate()
+	for iter.Next(&key, &values) {
+		var total bpfErrorCounterVal
+		for _, v := range values {
+			total.OpsCount += v.OpsCount
+		}
+		onEntry(key, total)
+		keyCopy := key
+		keysToDelete = append(keysToDelete, keyCopy)
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("warning: BPF error counter map iteration error: %v", err)
+	}
+	for i := range keysToDelete {
+		if err := m.Delete(&keysToDelete[i]); err != nil {
+			log.Printf("warning: BPF error counter map delete error: %v", err)
+		}
+	}
+}
+
+func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
+	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
+		mountPath, fsName := c.mountLabel(key.MountIdx)
+		const slurmJobID = ""
+		vals := [10]string{
+			fsName,
+			mountPath,
+			intentName(key.Intent),
+			rawOpToName(key.Op),
+			strconv.FormatUint(uint64(key.UID), 10),
+			c.resolver.Resolve(key.UID),
+			sanitizeComm(key.Comm[:]),
+			actorTypeName(key.ActorType),
+			slurmJobID,
+			errnoClassName(key.Reason),
+		}
+		accKey := strings.Join(vals[:], labelKeySep)
+
+		acc, ok := c.lliteErrorAcc[accKey]
+		if !ok {
+			acc = &lliteErrorAccum{values: vals}
+			c.lliteErrorAcc[accKey] = acc
+		}
+		acc.opsCount += float64(total.OpsCount)
+	})
+}
+
+func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
+	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
+		mountPath, fsName := c.mountLabel(key.MountIdx)
+		const slurmJobID = ""
+		eventName := rpcEventTypeName(key.Reason)
+		if eventName == "" {
+			eventName = "unknown"
+		}
+		vals := [8]string{
+			fsName,
+			mountPath,
+			eventName,
+			strconv.FormatUint(uint64(key.UID), 10),
+			c.resolver.Resolve(key.UID),
+			sanitizeComm(key.Comm[:]),
+			actorTypeName(key.ActorType),
+			slurmJobID,
+		}
+		accKey := strings.Join(vals[:], labelKeySep)
+
+		acc, ok := c.rpcErrorAcc[accKey]
+		if !ok {
+			acc = &rpcErrorAccum{values: vals}
+			c.rpcErrorAcc[accKey] = acc
 		}
 		acc.opsCount += float64(total.OpsCount)
 	})
