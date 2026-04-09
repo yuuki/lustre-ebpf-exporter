@@ -146,7 +146,28 @@ struct {
   __uint(max_entries, 8192);
   __type(key, __u64);
   __type(value, __u8);
-} selected_mount_tids SEC(".maps"), tracked_reqs SEC(".maps");
+} selected_mount_tids SEC(".maps");
+
+/* Preserved identity of the original request submitter. PtlRPC recovery
+ * functions (resend, restart, expire, notconn) run in ptlrpcd worker
+ * context, so bpf_get_current_uid_gid/comm would return the worker's
+ * identity instead of the affected user. Storing the submitter's identity
+ * at send_new_req/queue_wait time lets error probes attribute events to
+ * the right user. */
+struct tracked_req_info {
+  __u32 uid;
+  __u32 pid;
+  __u8  mount_idx;
+  __u8  pad[7];
+  char  comm[TASK_COMM_LEN];
+};
+
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(max_entries, 8192);
+  __type(key, __u64);
+  __type(value, struct tracked_req_info);
+} tracked_reqs SEC(".maps");
 
 struct agg_key {
   __u32 uid;
@@ -546,7 +567,16 @@ int ptlrpc_send_new_req_enter(struct pt_regs *ctx) {
   __u8 mount_idx = *midx;
   fill_start_info(&info, req_ptr);
   info.mount_idx = mount_idx;
-  bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &mount_idx, BPF_ANY);
+
+  /* Snapshot the submitter's identity so recovery probes running in
+   * ptlrpcd worker context can attribute events to the right user. */
+  struct tracked_req_info tri = {};
+  tri.uid = info.uid;
+  tri.pid = info.pid;
+  tri.mount_idx = mount_idx;
+  __builtin_memcpy(tri.comm, info.comm, TASK_COMM_LEN);
+  bpf_map_update_elem(&tracked_reqs, &info.request_ptr, &tri, BPF_ANY);
+
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_SEND_NEW_REQ, 0, 0, info.request_ptr, 0);
   return 0;
 }
@@ -557,23 +587,38 @@ int ptlrpc_queue_wait_enter(struct pt_regs *ctx) {
   __u64 req_ptr = PT_REGS_PARM1(ctx);
   struct start_info info = {};
   __u8 mount_idx = 0;
+  int is_submitter = 0;
 
   __u8 *selected = bpf_map_lookup_elem(&selected_mount_tids, &tid);
   if (selected) {
     mount_idx = *selected;
+    is_submitter = 1;
   } else {
-    __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
-    if (!tracked) {
+    struct tracked_req_info *tri = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
+    if (!tri) {
       return 0;
     }
-    mount_idx = *tracked;
+    mount_idx = tri->mount_idx;
   }
 
   fill_start_info(&info, req_ptr);
   info.mount_idx = mount_idx;
   struct inflight_key key = {.tid = tid, .op = OP_QUEUE_WAIT};
   bpf_map_update_elem(&inflight_map, &key, &info, BPF_ANY);
-  bpf_map_update_elem(&tracked_reqs, &req_ptr, &mount_idx, BPF_ANY);
+
+  /* Only update tracked_reqs when running in the original submitter's
+   * context (selected_mount_tids hit). In the fallback path the current
+   * task is not the submitter, so writing here would overwrite the
+   * stored identity and cause downstream recovery probes to mis-attribute
+   * the error to ptlrpcd. */
+  if (is_submitter) {
+    struct tracked_req_info tri = {};
+    tri.uid = info.uid;
+    tri.pid = info.pid;
+    tri.mount_idx = mount_idx;
+    __builtin_memcpy(tri.comm, info.comm, TASK_COMM_LEN);
+    bpf_map_update_elem(&tracked_reqs, &req_ptr, &tri, BPF_ANY);
+  }
   return 0;
 }
 
@@ -596,13 +641,18 @@ int ptlrpc_queue_wait_exit(struct pt_regs *ctx) {
 SEC("kprobe/__ptlrpc_free_req")
 int ptlrpc_free_req_enter(struct pt_regs *ctx) {
   __u64 req_ptr = PT_REGS_PARM1(ctx);
-  __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
-  struct start_info info = {};
-  if (!tracked) {
+  struct tracked_req_info *tri = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
+  if (!tri) {
     return 0;
   }
-  fill_start_info(&info, req_ptr);
-  info.mount_idx = *tracked;
+  /* Use stored submitter identity instead of current task context,
+   * since free_req may run from a different thread. */
+  struct start_info info = {};
+  info.uid = tri->uid;
+  info.pid = tri->pid;
+  info.mount_idx = tri->mount_idx;
+  info.request_ptr = req_ptr;
+  __builtin_memcpy(info.comm, tri->comm, TASK_COMM_LEN);
   emit_from_start(ctx, &info, PLANE_PTLRPC, OP_FREE_REQ, 0, 0, req_ptr, 0);
   bpf_map_delete_elem(&tracked_reqs, &req_ptr);
   return 0;
@@ -777,22 +827,24 @@ int ll_statfs_exit(struct pt_regs *ctx) {
  */
 
 static __always_inline int record_rpc_error_event(void *ctx, __u8 event_type, __u64 req_ptr) {
-  __u8 mount_idx = 0;
-  __u8 *tracked = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
-  if (tracked) {
-    mount_idx = *tracked;
-  } else {
-    __u64 tid = current_tid();
-    __u8 *midx = bpf_map_lookup_elem(&selected_mount_tids, &tid);
-    if (!midx) {
-      return 0;
-    }
-    mount_idx = *midx;
+  struct tracked_req_info *tri = bpf_map_lookup_elem(&tracked_reqs, &req_ptr);
+  if (!tri) {
+    /* Request not tracked — we have no submitter identity to attribute
+     * the error to. Dropping this event is preferable to mis-attributing
+     * it to the current (worker) task. The selected_mount_tids fallback
+     * is not useful here because the current thread is typically ptlrpcd,
+     * not the original submitter. */
+    return 0;
   }
 
+  /* Use the original submitter's identity stored at send_new_req /
+   * queue_wait time, not the current task (which is often ptlrpcd). */
   struct start_info info = {};
-  fill_start_info(&info, req_ptr);
-  info.mount_idx = mount_idx;
+  info.uid = tri->uid;
+  info.pid = tri->pid;
+  info.mount_idx = tri->mount_idx;
+  info.request_ptr = req_ptr;
+  __builtin_memcpy(info.comm, tri->comm, TASK_COMM_LEN);
 
   __u8 actor_type = classify_actor_type(info.comm);
   increment_error_counter(&rpc_error_counters, &info, 0,
