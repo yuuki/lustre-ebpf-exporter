@@ -101,8 +101,10 @@ The Prometheus metric family names are:
 - `lustre_client_access_operations_total`
 - `lustre_client_access_duration_seconds`
 - `lustre_client_data_bytes_total`
+- `lustre_client_operation_errors_total`
 - `lustre_client_rpc_wait_operations_total`
 - `lustre_client_rpc_wait_duration_seconds`
+- `lustre_client_rpc_errors_total`
 - `lustre_client_inflight_requests`
 
 Common labels are:
@@ -118,7 +120,9 @@ Common labels are:
 Additional labels by family:
 
 - llite workload metrics also use `access_intent` and `op`
+- llite error metrics also use `access_intent`, `op`, and `errno_class` (values: `timeout`, `notconn`, `perm`, `notfound`, `io`, `again`, `other`)
 - RPC wait metrics also use `op`
+- RPC error metrics also use `event` (values: `resend`, `restart`, `expire`, `notconn`)
 
 Label cardinality is intentionally constrained:
 
@@ -131,8 +135,10 @@ Label cardinality is intentionally constrained:
 Go CO-RE exporter:
 
 - `lustre_client_access_operations_total`
+- `lustre_client_operation_errors_total` (llite VFS failures classified by errno_class; requires kretprobes)
 - `lustre_client_rpc_wait_operations_total` when the relevant optional probes are available
 - `lustre_client_rpc_wait_duration_seconds` when the relevant optional probes are available
+- `lustre_client_rpc_errors_total` when the relevant optional probes are available (`ptlrpc_resend_req`, `ptlrpc_restart_req`, `ptlrpc_expire_one_request`, `ptlrpc_request_handle_notconn`)
 - `lustre_client_inflight_requests` when request lifecycle probes are available
 
 The legacy Python exporter emits all six families; see [`legacy/`](legacy/README.md).
