@@ -81,6 +81,11 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		{symbol: "ll_setattr", program: "ll_setattr_exit", ret: true, optional: true},
 		{symbol: "ll_statfs", program: "ll_statfs_enter", optional: true},
 		{symbol: "ll_statfs", program: "ll_statfs_exit", ret: true, optional: true},
+		// PtlRPC error/recovery event probes.
+		{symbol: "ptlrpc_resend_req", program: "ptlrpc_resend_req_enter", optional: true},
+		{symbol: "ptlrpc_restart_req", program: "ptlrpc_restart_req_enter", optional: true},
+		{symbol: "ptlrpc_expire_one_request", program: "ptlrpc_expire_one_request_enter", optional: true},
+		{symbol: "ptlrpc_request_handle_notconn", program: "ptlrpc_request_handle_notconn_enter", optional: true},
 	}
 
 	spec, err := bpf.LoadCollectionSpec()
@@ -229,6 +234,10 @@ func (s *linuxEventSource) Events() <-chan Event {
 
 func (s *linuxEventSource) CounterMaps() (llite, rpc *ebpf.Map) {
 	return s.collection.Maps["llite_counters"], s.collection.Maps["rpc_counters"]
+}
+
+func (s *linuxEventSource) ErrorCounterMaps() (lliteErrors, rpcErrors *ebpf.Map) {
+	return s.collection.Maps["llite_error_counters"], s.collection.Maps["rpc_error_counters"]
 }
 
 func (s *linuxEventSource) Close() error {

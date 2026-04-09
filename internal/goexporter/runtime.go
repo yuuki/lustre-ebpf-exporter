@@ -17,6 +17,7 @@ import (
 type EventSource interface {
 	Events() <-chan Event
 	CounterMaps() (llite, rpc *ebpf.Map)
+	ErrorCounterMaps() (lliteErrors, rpcErrors *ebpf.Map)
 	Close() error
 }
 
@@ -44,7 +45,8 @@ func Run(ctx context.Context, cfg Config) error {
 	procNameResolver := NewProcNameResolver()
 
 	lliteMap, rpcMap := source.CounterMaps()
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, mountInfos, resolver, slurmResolver)
+	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, mountInfos, resolver, slurmResolver)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
 	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector)

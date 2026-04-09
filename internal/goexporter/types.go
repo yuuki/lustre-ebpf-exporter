@@ -70,7 +70,82 @@ const (
 	IntentSync              = "sync"
 )
 
-// BPF agg_key struct に対応。バイトレイアウトは BPF C struct と一致。
+const (
+	ErrnoClassTimeout  = "timeout"
+	ErrnoClassNotconn  = "notconn"
+	ErrnoClassPerm     = "perm"
+	ErrnoClassNotfound = "notfound"
+	ErrnoClassIO       = "io"
+	ErrnoClassAgain    = "again"
+	ErrnoClassOther    = "other"
+)
+
+const (
+	rawErrnoClassNone     uint8 = 0
+	rawErrnoClassTimeout  uint8 = 1
+	rawErrnoClassNotconn  uint8 = 2
+	rawErrnoClassPerm     uint8 = 3
+	rawErrnoClassNotfound uint8 = 4
+	rawErrnoClassIO       uint8 = 5
+	rawErrnoClassAgain    uint8 = 6
+	rawErrnoClassOther    uint8 = 7
+)
+
+func errnoClassName(raw uint8) string {
+	switch raw {
+	case rawErrnoClassNone:
+		return ""
+	case rawErrnoClassTimeout:
+		return ErrnoClassTimeout
+	case rawErrnoClassNotconn:
+		return ErrnoClassNotconn
+	case rawErrnoClassPerm:
+		return ErrnoClassPerm
+	case rawErrnoClassNotfound:
+		return ErrnoClassNotfound
+	case rawErrnoClassIO:
+		return ErrnoClassIO
+	case rawErrnoClassAgain:
+		return ErrnoClassAgain
+	case rawErrnoClassOther:
+		return ErrnoClassOther
+	default:
+		return ErrnoClassOther
+	}
+}
+
+const (
+	RPCEventResend  = "resend"
+	RPCEventRestart = "restart"
+	RPCEventExpire  = "expire"
+	RPCEventNotconn = "notconn"
+
+	unknownRPCEvent = "unknown"
+)
+
+const (
+	rawRPCEventResend  uint8 = 1
+	rawRPCEventRestart uint8 = 2
+	rawRPCEventExpire  uint8 = 3
+	rawRPCEventNotconn uint8 = 4
+)
+
+func rpcEventTypeName(raw uint8) string {
+	switch raw {
+	case rawRPCEventResend:
+		return RPCEventResend
+	case rawRPCEventRestart:
+		return RPCEventRestart
+	case rawRPCEventExpire:
+		return RPCEventExpire
+	case rawRPCEventNotconn:
+		return RPCEventNotconn
+	default:
+		return ""
+	}
+}
+
+// bpfAggKey mirrors the BPF agg_key struct. Byte layout must match the C definition.
 type bpfAggKey struct {
 	UID       uint32
 	Op        uint8
@@ -80,10 +155,27 @@ type bpfAggKey struct {
 	Comm      [16]byte
 }
 
-// BPF counter_val struct に対応。
+// bpfCounterVal mirrors the BPF counter_val struct.
 type bpfCounterVal struct {
 	OpsCount uint64
 	BytesSum uint64
+}
+
+// bpfErrorAggKey mirrors the BPF error_agg_key struct. Byte layout must match the C definition.
+type bpfErrorAggKey struct {
+	UID       uint32
+	Op        uint8
+	MountIdx  uint8
+	ActorType uint8
+	Intent    uint8
+	Reason    uint8
+	Pad       [7]byte
+	Comm      [16]byte
+}
+
+// bpfErrorCounterVal mirrors the BPF error_counter_val struct.
+type bpfErrorCounterVal struct {
+	OpsCount uint64
 }
 
 const (
@@ -189,6 +281,7 @@ type Config struct {
 type Event struct {
 	Plane      string
 	Op         string
+	ErrnoClass string
 	UID        uint32
 	PID        uint32
 	MountIdx   uint32
@@ -232,6 +325,7 @@ func parseObserverEvent(sample []byte) (Event, error) {
 	return Event{
 		Plane:      plane,
 		Op:         op,
+		ErrnoClass: errnoClassName(sample[2]),
 		UID:        binary.LittleEndian.Uint32(sample[8:12]),
 		PID:        binary.LittleEndian.Uint32(sample[12:16]),
 		MountIdx:   binary.LittleEndian.Uint32(sample[16:20]),

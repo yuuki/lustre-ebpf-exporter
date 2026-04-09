@@ -15,9 +15,11 @@ import (
 )
 
 var (
-	baseLabels   = []string{"fs", "mount", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	ptlrpcLabels = []string{"fs", "mount", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	lliteLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
+	baseLabels      = []string{"fs", "mount", "uid", "username", "process", "actor_type", "slurm_job_id"}
+	ptlrpcLabels    = []string{"fs", "mount", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
+	lliteLabels     = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
+	lliteErrLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"}
+	rpcErrorLabels  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type", "slurm_job_id"}
 )
 
 // PrometheusExporter serves Prometheus metrics via HTTP.
