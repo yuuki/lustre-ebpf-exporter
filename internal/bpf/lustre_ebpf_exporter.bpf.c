@@ -403,7 +403,7 @@ static __always_inline int finish_llite_op(void *ctx, __u8 op, long ret, int emi
   return 0;
 }
 
-static __always_inline int finish_openat(void *ctx) {
+static __always_inline int finish_openat(struct pt_regs *ctx) {
   __u64 tid = current_tid();
   long ret = PT_REGS_RC(ctx);
   struct inflight_key lk = {.tid = tid, .op = OP_LOOKUP};
