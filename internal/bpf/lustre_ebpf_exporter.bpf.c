@@ -543,10 +543,10 @@ int ptlrpc_free_req_enter(struct pt_regs *ctx) {
  * Metadata-op kprobe/kretprobe group.
  *
  * Kernel assumption: Linux 5.12+ idmapped-mount inode_operation signatures
- * (mnt_idmap*/user_namespace* in PARM1, inode/dentry/path in PARM2). On
- * older kernels the parameter positions shift and s_dev extraction silently
- * yields no event. All probes are optional and graceful skips are handled
- * by internal/goexporter/runtime_linux.go.
+ * (mnt_idmap or user_namespace pointer in PARM1, inode/dentry/path in
+ * PARM2). On older kernels the parameter positions shift and s_dev
+ * extraction silently yields no event. All probes are optional and
+ * graceful skips are handled by internal/goexporter/runtime_linux.go.
  */
 
 static __always_inline int finish_llite_op(void *ctx, void *map, __u8 op, long ret) {
