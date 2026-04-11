@@ -79,6 +79,13 @@ const (
 	PCCModeRW        = "rw"
 	PCCTriggerManual = "manual"
 	PCCTriggerAuto   = "auto"
+
+	// Raw PCC mode/trigger values packed by BPF into request_ptr.
+	// Must match PCC_MODE_* / PCC_TRIGGER_* in lustre_ebpf_exporter.bpf.c.
+	rawPCCModeRO        uint8 = 1
+	rawPCCModeRW        uint8 = 2
+	rawPCCTriggerManual uint8 = 1
+	rawPCCTriggerAuto   uint8 = 2
 )
 
 const (
@@ -444,17 +451,17 @@ func DecodePCCAttachInfo(requestPtr uint64) (mode, trigger string) {
 	rawMode := uint8(requestPtr >> 8)
 	rawTrigger := uint8(requestPtr & 0xFF)
 	switch rawMode {
-	case 1:
+	case rawPCCModeRO:
 		mode = PCCModeRO
-	case 2:
+	case rawPCCModeRW:
 		mode = PCCModeRW
 	default:
 		mode = "unknown"
 	}
 	switch rawTrigger {
-	case 1:
+	case rawPCCTriggerManual:
 		trigger = PCCTriggerManual
-	case 2:
+	case rawPCCTriggerAuto:
 		trigger = PCCTriggerAuto
 	default:
 		trigger = "unknown"

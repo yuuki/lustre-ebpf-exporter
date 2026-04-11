@@ -20,8 +20,6 @@ var (
 	lliteLabels     = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
 	lliteErrLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"}
 	rpcErrorLabels  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	pccLabels       = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	pccErrLabels    = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"}
 	pccAttachLabels = []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type", "slurm_job_id"}
 )
 
@@ -83,7 +81,7 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 				Help:    "PCC I/O operation latency in seconds",
 				Buckets: PrometheusLatencyBucketsSeconds,
 			},
-			pccLabels,
+			lliteLabels,
 		),
 		PCCAttachTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
