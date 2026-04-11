@@ -94,10 +94,7 @@ func Run(ctx context.Context, cfg Config) error {
 			} else {
 				log.Printf("warning: event has unknown mount index %d", event.MountIdx)
 			}
-			event.Comm = procNameResolver.Resolve(event.PID, event.Comm)
-			if processFilter.IsActive() {
-				event.Comm = processFilter.Normalize(event.Comm)
-			}
+			event.Comm = processFilter.Normalize(procNameResolver.Resolve(event.PID, event.Comm))
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
