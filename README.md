@@ -164,8 +164,8 @@ Go CO-RE exporter:
 - `lustre_client_pcc_operation_errors_total` when PCC module probes are available
 - `lustre_client_pcc_attach_total` when PCC attach probes are available
 - `lustre_client_pcc_attach_failures_total` when PCC attach probes are available
-- `lustre_client_pcc_detach_total` when PCC attach probes are available
-- `lustre_client_pcc_layout_invalidations_total` when PCC attach probes are available
+- `lustre_client_pcc_detach_total` when PCC lifecycle probes are available
+- `lustre_client_pcc_layout_invalidations_total` when PCC lifecycle probes are available
 
 The legacy Python exporter emits all six families; see [`legacy/`](legacy/README.md).
 

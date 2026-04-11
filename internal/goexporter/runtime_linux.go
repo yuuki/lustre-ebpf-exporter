@@ -110,10 +110,9 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 			probeSpec{symbol: "pcc_try_auto_attach", program: "pcc_try_auto_attach_exit", ret: true, optional: true},
 			probeSpec{symbol: "pcc_try_readonly_open_attach", program: "pcc_try_readonly_open_attach_enter", optional: true},
 			probeSpec{symbol: "pcc_try_readonly_open_attach", program: "pcc_try_readonly_open_attach_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_readonly_attach_sync", program: "pcc_readonly_attach_sync_enter", optional: true},
-			probeSpec{symbol: "pcc_readonly_attach_sync", program: "pcc_readonly_attach_sync_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_readwrite_attach", program: "pcc_readwrite_attach_enter", optional: true},
-			probeSpec{symbol: "pcc_readwrite_attach", program: "pcc_readwrite_attach_exit", ret: true, optional: true},
+			// pcc_readonly_attach_sync and pcc_readwrite_attach are internal
+			// functions called by the top-level attach probes above; not probed
+			// to avoid inflight_map key collisions on the same thread.
 			probeSpec{symbol: "pcc_layout_invalidate", program: "pcc_layout_invalidate_enter", optional: true},
 		)
 	}

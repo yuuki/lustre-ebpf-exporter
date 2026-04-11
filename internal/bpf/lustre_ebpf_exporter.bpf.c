@@ -1114,31 +1114,10 @@ int pcc_try_readonly_open_attach_exit(struct pt_regs *ctx) {
   return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
 }
 
-SEC("kprobe/pcc_readonly_attach_sync")
-int pcc_readonly_attach_sync_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
-  if (!read_inode_dev(inode, &s_dev)) return 0;
-  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, PCC_MODE_RO, PCC_TRIGGER_AUTO);
-}
-
-SEC("kretprobe/pcc_readonly_attach_sync")
-int pcc_readonly_attach_sync_exit(struct pt_regs *ctx) {
-  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
-}
-
-SEC("kprobe/pcc_readwrite_attach")
-int pcc_readwrite_attach_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
-  if (!read_inode_dev(inode, &s_dev)) return 0;
-  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, PCC_MODE_RW, PCC_TRIGGER_AUTO);
-}
-
-SEC("kretprobe/pcc_readwrite_attach")
-int pcc_readwrite_attach_exit(struct pt_regs *ctx) {
-  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
-}
+/* pcc_readonly_attach_sync and pcc_readwrite_attach are internal functions
+ * called by pcc_try_auto_attach / pcc_try_readonly_open_attach. Probing them
+ * would cause inflight_map key collisions (same tid + OP_PCC_ATTACH) leading
+ * to event loss. Only top-level entry points are probed. */
 
 SEC("kprobe/pcc_layout_invalidate")
 int pcc_layout_invalidate_enter(struct pt_regs *ctx) {
