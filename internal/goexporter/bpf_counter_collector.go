@@ -48,6 +48,11 @@ type BPFCounterCollector struct {
 
 	processFilter *ProcessFilter
 
+	// rawProcessOps tracks cumulative ops per raw (pre-normalization)
+	// process name. Used exclusively by opsPerProcess() so the tail-trim
+	// ranking is based on the original names, not normalized ones.
+	rawProcessOps map[string]float64
+
 	accessOpsDesc   *prometheus.Desc
 	dataBytesDesc   *prometheus.Desc
 	rpcWaitOpsDesc  *prometheus.Desc
@@ -94,6 +99,7 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.M
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
 		processFilter: processFilter,
+		rawProcessOps: map[string]float64{},
 		lliteAcc:      map[string]*lliteAccum{},
 		rpcAcc:        map[string]*rpcAccum{},
 		lliteErrorAcc: map[string]*lliteErrorAccum{},
@@ -221,19 +227,10 @@ func (c *BPFCounterCollector) DrainOnce() {
 	}
 }
 
-// opsPerProcess aggregates total ops per process name across all
-// accumulator maps. Used for tail-trim ranking.
+// opsPerProcess returns cumulative ops per raw (pre-normalization) process
+// name, suitable for stable tail-trim ranking.
 func (c *BPFCounterCollector) opsPerProcess() map[string]float64 {
-	m := make(map[string]float64)
-	// lliteAcc values[6] = process (position in lliteLabels: fs,mount,intent,op,uid,username,process,...)
-	for _, acc := range c.lliteAcc {
-		m[acc.values[6]] += acc.opsCount
-	}
-	// rpcAcc values[5] = process (position in ptlrpcLabels: fs,mount,op,uid,username,process,...)
-	for _, acc := range c.rpcAcc {
-		m[acc.values[5]] += acc.opsCount
-	}
-	return m
+	return c.rawProcessOps
 }
 
 // drainCounterMap iterates a BPF counter map, invokes onEntry for each
@@ -270,7 +267,7 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
 		const slurmJobID = ""
-		process := c.normalizeProcess(key.Comm)
+		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		vals := [9]string{
 			fsName,
 			mountPath,
@@ -298,7 +295,7 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
-		process := c.normalizeProcess(key.Comm)
+		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		vals := [8]string{
 			fsName,
 			mountPath,
@@ -350,7 +347,7 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
-		process := c.normalizeProcess(key.Comm)
+		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		vals := [10]string{
 			fsName,
 			mountPath,
@@ -382,7 +379,7 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		if eventName == "" {
 			eventName = unknownRPCEvent
 		}
-		process := c.normalizeProcess(key.Comm)
+		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		vals := [8]string{
 			fsName,
 			mountPath,
@@ -412,8 +409,14 @@ func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
 	return "", ""
 }
 
-func (c *BPFCounterCollector) normalizeProcess(comm [16]byte) string {
-	return c.processFilter.Normalize(sanitizeComm(comm[:]))
+// normalizeProcess sanitizes the BPF comm field, records raw ops for
+// tail-trim ranking, and returns the filtered process name.
+func (c *BPFCounterCollector) normalizeProcess(comm [16]byte, opsCount uint64) string {
+	raw := sanitizeComm(comm[:])
+	if opsCount > 0 {
+		c.rawProcessOps[raw] += float64(opsCount)
+	}
+	return c.processFilter.Normalize(raw)
 }
 
 func rawOpToName(raw uint8) string {

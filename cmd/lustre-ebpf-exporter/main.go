@@ -120,6 +120,9 @@ func main() {
 	if cfg.ProcessTailTrimPercent < 0 || cfg.ProcessTailTrimPercent > 100 {
 		log.Fatal("--process-tail-trim-percent must be between 0 and 100")
 	}
+	if cfg.ProcessTailTrimHysteresis < 1 {
+		log.Fatal("--process-tail-trim-hysteresis must be at least 1")
+	}
 
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))

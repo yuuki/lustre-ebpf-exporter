@@ -48,7 +48,7 @@ func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int) *
 		}
 	}
 	if hysteresis < 1 {
-		hysteresis = 1
+		hysteresis = 1 // defensive: callers should validate before construction
 	}
 	f := &ProcessFilter{
 		allowlist:          al,
@@ -98,7 +98,10 @@ func (f *ProcessFilter) UpdateTrimSet(opsPerProcess map[string]float64) {
 		entries = append(entries, processOpsEntry{name: name, ops: ops})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].ops < entries[j].ops
+		if entries[i].ops != entries[j].ops {
+			return entries[i].ops < entries[j].ops
+		}
+		return entries[i].name < entries[j].name
 	})
 
 	trimCount := int(float64(len(entries)) * f.trimPercent / 100.0)
