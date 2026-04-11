@@ -3,6 +3,7 @@ package goexporter
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 const processOther = "other"
@@ -19,18 +20,21 @@ const processOther = "other"
 //     names (by ops) are collapsed to "other". A hysteresis window (consecutive
 //     drain cycles a process must be in the trim set) prevents label churn.
 type ProcessFilter struct {
-	mu sync.RWMutex
-
-	// Static allowlist (nil means disabled).
+	// Static allowlist (nil means disabled). Immutable after construction.
 	allowlist map[string]struct{}
 
-	// Tail-trim configuration.
+	// Tail-trim configuration. Immutable after construction.
 	trimPercent float64 // 0–100; 0 means disabled.
 	hysteresis  int     // consecutive cycles before actually trimming.
 
-	// Tail-trim state.
-	trimmed      map[string]struct{} // currently trimmed processes.
-	trimCandidateCount map[string]int // process → consecutive cycles in trim candidate set.
+	// trimmed is stored as atomic.Value holding map[string]struct{} for
+	// lock-free reads on the hot path. Updated by UpdateTrimSet only.
+	trimmed atomic.Value // map[string]struct{}
+
+	// trimCandidateCount is only accessed by UpdateTrimSet (single writer,
+	// called from the drain goroutine), protected by candidateMu.
+	candidateMu        sync.Mutex
+	trimCandidateCount map[string]int
 }
 
 // NewProcessFilter creates a filter. Pass nil allowlist and trimPercent=0
@@ -46,19 +50,19 @@ func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int) *
 	if hysteresis < 1 {
 		hysteresis = 1
 	}
-	return &ProcessFilter{
+	f := &ProcessFilter{
 		allowlist:          al,
 		trimPercent:        trimPercent,
 		hysteresis:         hysteresis,
-		trimmed:            map[string]struct{}{},
 		trimCandidateCount: map[string]int{},
 	}
+	f.trimmed.Store(map[string]struct{}{})
+	return f
 }
 
 // Normalize returns the filtered process name. Non-matching processes
-// are replaced with "other".
+// are replaced with "other". Lock-free on the hot path.
 func (f *ProcessFilter) Normalize(process string) string {
-	// Allowlist mode: takes priority.
 	if f.allowlist != nil {
 		if _, ok := f.allowlist[process]; ok {
 			return process
@@ -66,12 +70,9 @@ func (f *ProcessFilter) Normalize(process string) string {
 		return processOther
 	}
 
-	// Tail-trim mode.
 	if f.trimPercent > 0 {
-		f.mu.RLock()
-		_, trimmed := f.trimmed[process]
-		f.mu.RUnlock()
-		if trimmed {
+		trimmed := f.trimmed.Load().(map[string]struct{})
+		if _, ok := trimmed[process]; ok {
 			return processOther
 		}
 	}
@@ -87,8 +88,6 @@ type processOpsEntry struct {
 
 // UpdateTrimSet recomputes which processes should be trimmed based on
 // the current per-process operation counts. Called once per drain interval.
-// The opsPerProcess map should aggregate ops across all accumulator maps
-// (llite + rpc).
 func (f *ProcessFilter) UpdateTrimSet(opsPerProcess map[string]float64) {
 	if f.allowlist != nil || f.trimPercent <= 0 {
 		return
@@ -102,40 +101,41 @@ func (f *ProcessFilter) UpdateTrimSet(opsPerProcess map[string]float64) {
 		return entries[i].ops < entries[j].ops
 	})
 
-	// Bottom trimPercent% of unique process names.
 	trimCount := int(float64(len(entries)) * f.trimPercent / 100.0)
 
-	// Build candidate set for this cycle.
 	candidates := make(map[string]struct{}, trimCount)
 	for i := 0; i < trimCount && i < len(entries); i++ {
 		candidates[entries[i].name] = struct{}{}
 	}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Update hysteresis counters.
+	// Build new state outside any lock contention path.
+	f.candidateMu.Lock()
 	newCounts := make(map[string]int, len(candidates))
 	for name := range candidates {
 		newCounts[name] = f.trimCandidateCount[name] + 1
 	}
 	f.trimCandidateCount = newCounts
+	f.candidateMu.Unlock()
 
-	// Only trim processes that have been candidates for hysteresis consecutive cycles.
 	newTrimmed := make(map[string]struct{})
-	for name, count := range f.trimCandidateCount {
+	for name, count := range newCounts {
 		if count >= f.hysteresis {
 			newTrimmed[name] = struct{}{}
 		}
 	}
-	f.trimmed = newTrimmed
+	// Atomic swap — readers never block.
+	f.trimmed.Store(newTrimmed)
+}
+
+// ShouldUpdateTrimSet returns true when tail-trimming is enabled and no
+// allowlist overrides it.
+func (f *ProcessFilter) ShouldUpdateTrimSet() bool {
+	return f.trimPercent > 0 && f.allowlist == nil
 }
 
 // TrimmedCount returns the number of currently trimmed process names.
 func (f *ProcessFilter) TrimmedCount() int {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return len(f.trimmed)
+	return len(f.trimmed.Load().(map[string]struct{}))
 }
 
 // IsActive returns true if the filter is doing any filtering.
