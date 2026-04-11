@@ -86,6 +86,31 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		{symbol: "ptlrpc_restart_req", program: "ptlrpc_restart_req_enter", optional: true},
 		{symbol: "ptlrpc_expire_one_request", program: "ptlrpc_expire_one_request_enter", optional: true},
 		{symbol: "ptlrpc_request_handle_notconn", program: "ptlrpc_request_handle_notconn_enter", optional: true},
+		// PCC I/O probes (Phase 1). All optional — PCC module may not be loaded.
+		{symbol: "pcc_file_read_iter", program: "pcc_file_read_iter_enter", optional: true},
+		{symbol: "pcc_file_read_iter", program: "pcc_file_read_iter_exit", ret: true, optional: true},
+		{symbol: "pcc_file_write_iter", program: "pcc_file_write_iter_enter", optional: true},
+		{symbol: "pcc_file_write_iter", program: "pcc_file_write_iter_exit", ret: true, optional: true},
+		{symbol: "pcc_file_open", program: "pcc_file_open_enter", optional: true},
+		{symbol: "pcc_file_open", program: "pcc_file_open_exit", ret: true, optional: true},
+		{symbol: "pcc_lookup", program: "pcc_lookup_enter", optional: true},
+		{symbol: "pcc_lookup", program: "pcc_lookup_exit", ret: true, optional: true},
+		{symbol: "pcc_fsync", program: "pcc_fsync_enter", optional: true},
+		{symbol: "pcc_fsync", program: "pcc_fsync_exit", ret: true, optional: true},
+		// PCC attach/detach probes (Phase 2).
+		{symbol: "pcc_ioctl_attach", program: "pcc_ioctl_attach_enter", optional: true},
+		{symbol: "pcc_ioctl_attach", program: "pcc_ioctl_attach_exit", ret: true, optional: true},
+		{symbol: "pcc_ioctl_detach", program: "pcc_ioctl_detach_enter", optional: true},
+		{symbol: "pcc_ioctl_detach", program: "pcc_ioctl_detach_exit", ret: true, optional: true},
+		{symbol: "pcc_try_auto_attach", program: "pcc_try_auto_attach_enter", optional: true},
+		{symbol: "pcc_try_auto_attach", program: "pcc_try_auto_attach_exit", ret: true, optional: true},
+		{symbol: "pcc_try_readonly_open_attach", program: "pcc_try_readonly_open_attach_enter", optional: true},
+		{symbol: "pcc_try_readonly_open_attach", program: "pcc_try_readonly_open_attach_exit", ret: true, optional: true},
+		{symbol: "pcc_readonly_attach_sync", program: "pcc_readonly_attach_sync_enter", optional: true},
+		{symbol: "pcc_readonly_attach_sync", program: "pcc_readonly_attach_sync_exit", ret: true, optional: true},
+		{symbol: "pcc_readwrite_attach", program: "pcc_readwrite_attach_enter", optional: true},
+		{symbol: "pcc_readwrite_attach", program: "pcc_readwrite_attach_exit", ret: true, optional: true},
+		{symbol: "pcc_layout_invalidate", program: "pcc_layout_invalidate_enter", optional: true},
 	}
 
 	spec, err := bpf.LoadCollectionSpec()
@@ -238,6 +263,10 @@ func (s *linuxEventSource) CounterMaps() (llite, rpc *ebpf.Map) {
 
 func (s *linuxEventSource) ErrorCounterMaps() (lliteErrors, rpcErrors *ebpf.Map) {
 	return s.collection.Maps["llite_error_counters"], s.collection.Maps["rpc_error_counters"]
+}
+
+func (s *linuxEventSource) PccCounterMaps() (pcc, pccErrors *ebpf.Map) {
+	return s.collection.Maps["pcc_counters"], s.collection.Maps["pcc_error_counters"]
 }
 
 func (s *linuxEventSource) Close() error {

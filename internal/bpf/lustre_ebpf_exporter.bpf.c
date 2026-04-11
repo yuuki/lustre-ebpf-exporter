@@ -27,6 +27,27 @@
 #define OP_STATFS 18
 #define PLANE_LLITE 1
 #define PLANE_PTLRPC 2
+#define PLANE_PCC 3
+
+/* PCC-specific operation codes. PCC I/O ops use a separate range (22-26)
+ * from their llite counterparts (1-5) to avoid inflight_map key collisions:
+ * ll_file_read_iter calls pcc_file_read_iter internally, so both kprobes
+ * fire on the same thread — distinct op codes ensure distinct inflight_keys. */
+#define OP_PCC_ATTACH     19
+#define OP_PCC_DETACH     20
+#define OP_PCC_INVALIDATE 21
+#define OP_PCC_READ       22
+#define OP_PCC_WRITE      23
+#define OP_PCC_OPEN       24
+#define OP_PCC_LOOKUP     25
+#define OP_PCC_FSYNC      26
+
+/* PCC attach mode (packed into request_ptr high byte). */
+#define PCC_MODE_RO  1
+#define PCC_MODE_RW  2
+/* PCC attach trigger (packed into request_ptr low byte). */
+#define PCC_TRIGGER_MANUAL 1
+#define PCC_TRIGGER_AUTO   2
 
 #define ACTOR_USER          0
 #define ACTOR_CLIENT_WORKER 1
@@ -226,6 +247,22 @@ struct {
   __type(value, struct error_counter_val);
 } rpc_error_counters SEC(".maps");
 
+/* PCC counter maps — same key/value schemas as llite_counters / llite_error_counters
+ * but for operations routed through the PCC cache layer. */
+struct {
+  __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+  __uint(max_entries, 2048);
+  __type(key, struct agg_key);
+  __type(value, struct counter_val);
+} pcc_counters SEC(".maps");
+
+struct {
+  __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+  __uint(max_entries, 512);
+  __type(key, struct error_agg_key);
+  __type(value, struct error_counter_val);
+} pcc_error_counters SEC(".maps");
+
 static __always_inline __u8 classify_errno(long ret) {
   if (ret >= 0) return ERRNO_CLASS_NONE;
   long e = -ret;
@@ -280,14 +317,16 @@ static __always_inline __u8 intent_for_op(__u8 op) {
   switch (op) {
   case OP_LOOKUP: case OP_OPEN:
   case OP_CLOSE: case OP_GETATTR: case OP_GETXATTR: case OP_STATFS:
+  case OP_PCC_LOOKUP: case OP_PCC_OPEN:
     return INTENT_NAMESPACE_READ;
   case OP_MKDIR: case OP_MKNOD: case OP_RENAME: case OP_RMDIR:
   case OP_SETATTR: case OP_SETXATTR:
+  case OP_PCC_ATTACH: case OP_PCC_DETACH: case OP_PCC_INVALIDATE:
     return INTENT_NAMESPACE_MUTATION;
-  case OP_READ:                  return INTENT_DATA_READ;
-  case OP_WRITE:                 return INTENT_DATA_WRITE;
-  case OP_FSYNC:                 return INTENT_SYNC;
-  default:                       return INTENT_UNKNOWN;
+  case OP_READ:     case OP_PCC_READ:  return INTENT_DATA_READ;
+  case OP_WRITE:    case OP_PCC_WRITE: return INTENT_DATA_WRITE;
+  case OP_FSYNC:    case OP_PCC_FSYNC: return INTENT_SYNC;
+  default:                             return INTENT_UNKNOWN;
   }
 }
 
@@ -870,6 +909,254 @@ int ptlrpc_expire_one_request_enter(struct pt_regs *ctx) {
 SEC("kprobe/ptlrpc_request_handle_notconn")
 int ptlrpc_request_handle_notconn_enter(struct pt_regs *ctx) {
   return record_rpc_error_event(ctx, RPC_EVENT_NOTCONN, PT_REGS_PARM1(ctx));
+}
+
+/*
+ * PCC (Persistent Client Cache) kprobes.
+ *
+ * PCC is a client-local persistent cache with RO/RW modes. When PCC is
+ * active, ll_file_read_iter calls pcc_file_read_iter internally, so both
+ * kprobes fire on the same thread. PCC ops use a dedicated op-code range
+ * (OP_PCC_READ=22, etc.) to avoid inflight_map key collisions with the
+ * llite ops (OP_READ=3, etc.).
+ *
+ * All PCC probes are optional: the PCC module may not be loaded.
+ */
+
+/* ---------- PCC helpers ---------- */
+
+static __always_inline int track_pcc_enter(__u8 op, __u32 s_dev) {
+  __u8 mount_idx = 0;
+  if (!lookup_mount(s_dev, &mount_idx)) {
+    return 0;
+  }
+  __u64 tid = current_tid();
+  struct start_info info = {};
+  fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
+  struct inflight_key key = {.tid = tid, .op = op};
+  bpf_map_update_elem(&inflight_map, &key, &info, BPF_ANY);
+  /* No selected_mount_tids update: PCC bypasses PtlRPC. */
+  return 0;
+}
+
+static __always_inline int emit_pcc_event(void *ctx, struct start_info *info,
+    __u8 op, long ret, int emit_bytes) {
+  __u64 duration_us = (bpf_ktime_get_ns() - info->start_ns) / 1000;
+  __u64 size_bytes = (emit_bytes && ret > 0) ? (__u64)ret : 0;
+
+  __u8 actor_type = classify_actor_type(info->comm);
+  __u8 intent = intent_for_op(op);
+  __u8 errno_class = classify_errno(ret);
+
+  increment_counter(&pcc_counters, info, op, actor_type, intent, size_bytes);
+
+  if (errno_class != ERRNO_CLASS_NONE) {
+    increment_error_counter(&pcc_error_counters, info, op,
+        actor_type, intent, errno_class);
+  }
+
+  emit_from_start(ctx, info, PLANE_PCC, op, duration_us, size_bytes,
+      info->request_ptr, errno_class);
+  return 0;
+}
+
+static __always_inline int finish_pcc_op(void *ctx, __u8 op, long ret, int emit_bytes) {
+  __u64 tid = current_tid();
+  struct inflight_key key = {.tid = tid, .op = op};
+  struct start_info *info = bpf_map_lookup_elem(&inflight_map, &key);
+  if (!info) {
+    return 0;
+  }
+  emit_pcc_event(ctx, info, op, ret, emit_bytes);
+  bpf_map_delete_elem(&inflight_map, &key);
+  return 0;
+}
+
+/* ---------- Phase 1: PCC I/O kprobes ---------- */
+
+SEC("kprobe/pcc_file_read_iter")
+int pcc_file_read_iter_enter(struct pt_regs *ctx) {
+  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_kiocb_dev(kiocb, &s_dev)) return 0;
+  return track_pcc_enter(OP_PCC_READ, s_dev);
+}
+
+SEC("kretprobe/pcc_file_read_iter")
+int pcc_file_read_iter_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_READ, PT_REGS_RC(ctx), 1);
+}
+
+SEC("kprobe/pcc_file_write_iter")
+int pcc_file_write_iter_enter(struct pt_regs *ctx) {
+  struct kiocb *kiocb = (struct kiocb *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_kiocb_dev(kiocb, &s_dev)) return 0;
+  return track_pcc_enter(OP_PCC_WRITE, s_dev);
+}
+
+SEC("kretprobe/pcc_file_write_iter")
+int pcc_file_write_iter_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_WRITE, PT_REGS_RC(ctx), 1);
+}
+
+SEC("kprobe/pcc_file_open")
+int pcc_file_open_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  return track_pcc_enter(OP_PCC_OPEN, s_dev);
+}
+
+SEC("kretprobe/pcc_file_open")
+int pcc_file_open_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_OPEN, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_lookup")
+int pcc_lookup_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  return track_pcc_enter(OP_PCC_LOOKUP, s_dev);
+}
+
+SEC("kretprobe/pcc_lookup")
+int pcc_lookup_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_LOOKUP, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_fsync")
+int pcc_fsync_enter(struct pt_regs *ctx) {
+  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_file_dev(file, &s_dev)) return 0;
+  return track_pcc_enter(OP_PCC_FSYNC, s_dev);
+}
+
+SEC("kretprobe/pcc_fsync")
+int pcc_fsync_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_FSYNC, PT_REGS_RC(ctx), 0);
+}
+
+/* ---------- Phase 2: PCC attach/detach kprobes ---------- */
+
+/* Helper to enter an attach/detach operation. Packs mode and trigger
+ * into request_ptr so they can be decoded in Go userspace. */
+static __always_inline int track_pcc_attach_enter(__u8 op, __u32 s_dev,
+    __u8 mode, __u8 trigger) {
+  __u8 mount_idx = 0;
+  if (!lookup_mount(s_dev, &mount_idx)) {
+    return 0;
+  }
+  __u64 tid = current_tid();
+  struct start_info info = {};
+  fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
+  info.request_ptr = ((__u64)mode << 8) | (__u64)trigger;
+  struct inflight_key key = {.tid = tid, .op = op};
+  bpf_map_update_elem(&inflight_map, &key, &info, BPF_ANY);
+  return 0;
+}
+
+SEC("kprobe/pcc_ioctl_attach")
+int pcc_ioctl_attach_enter(struct pt_regs *ctx) {
+  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_file_dev(file, &s_dev)) return 0;
+  /* ioctl attach: mode is unknown at entry (determined by userspace args);
+   * use 0 as placeholder — Go side will show "unknown". */
+  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, 0, PCC_TRIGGER_MANUAL);
+}
+
+SEC("kretprobe/pcc_ioctl_attach")
+int pcc_ioctl_attach_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_ioctl_detach")
+int pcc_ioctl_detach_enter(struct pt_regs *ctx) {
+  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_file_dev(file, &s_dev)) return 0;
+  return track_pcc_attach_enter(OP_PCC_DETACH, s_dev, 0, PCC_TRIGGER_MANUAL);
+}
+
+SEC("kretprobe/pcc_ioctl_detach")
+int pcc_ioctl_detach_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_DETACH, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_try_auto_attach")
+int pcc_try_auto_attach_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, 0, PCC_TRIGGER_AUTO);
+}
+
+SEC("kretprobe/pcc_try_auto_attach")
+int pcc_try_auto_attach_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_try_readonly_open_attach")
+int pcc_try_readonly_open_attach_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, PCC_MODE_RO, PCC_TRIGGER_AUTO);
+}
+
+SEC("kretprobe/pcc_try_readonly_open_attach")
+int pcc_try_readonly_open_attach_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_readonly_attach_sync")
+int pcc_readonly_attach_sync_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, PCC_MODE_RO, PCC_TRIGGER_AUTO);
+}
+
+SEC("kretprobe/pcc_readonly_attach_sync")
+int pcc_readonly_attach_sync_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_readwrite_attach")
+int pcc_readwrite_attach_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  return track_pcc_attach_enter(OP_PCC_ATTACH, s_dev, PCC_MODE_RW, PCC_TRIGGER_AUTO);
+}
+
+SEC("kretprobe/pcc_readwrite_attach")
+int pcc_readwrite_attach_exit(struct pt_regs *ctx) {
+  return finish_pcc_op(ctx, OP_PCC_ATTACH, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/pcc_layout_invalidate")
+int pcc_layout_invalidate_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) return 0;
+  /* Entry-only counter probe: emit an event with zero duration. */
+  __u8 mount_idx = 0;
+  if (!lookup_mount(s_dev, &mount_idx)) return 0;
+  struct start_info info = {};
+  fill_start_info(&info, 0);
+  info.mount_idx = mount_idx;
+  __u8 actor_type = classify_actor_type(info.comm);
+  increment_counter(&pcc_counters, &info, OP_PCC_INVALIDATE,
+      actor_type, INTENT_NAMESPACE_MUTATION, 0);
+  emit_from_start(ctx, &info, PLANE_PCC, OP_PCC_INVALIDATE, 0, 0, 0,
+      ERRNO_CLASS_NONE);
+  return 0;
 }
 
 char LICENSE[] SEC("license") = "GPL";
