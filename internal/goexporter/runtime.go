@@ -43,10 +43,11 @@ func Run(ctx context.Context, cfg Config) error {
 	resolver := NewUsernameResolver()
 	slurmResolver := newSlurmResolverFromConfig(cfg)
 	procNameResolver := NewProcNameResolver()
+	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis)
 
 	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, mountInfos, resolver, slurmResolver)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, mountInfos, resolver, slurmResolver, processFilter)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
 	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector)
@@ -94,6 +95,9 @@ func Run(ctx context.Context, cfg Config) error {
 				log.Printf("warning: event has unknown mount index %d", event.MountIdx)
 			}
 			event.Comm = procNameResolver.Resolve(event.PID, event.Comm)
+			if processFilter.IsActive() {
+				event.Comm = processFilter.Normalize(event.Comm)
+			}
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}

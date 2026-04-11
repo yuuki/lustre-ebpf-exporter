@@ -46,6 +46,8 @@ type BPFCounterCollector struct {
 	lliteErrorAcc map[string]*lliteErrorAccum
 	rpcErrorAcc   map[string]*rpcErrorAccum
 
+	processFilter *ProcessFilter
+
 	accessOpsDesc   *prometheus.Desc
 	dataBytesDesc   *prometheus.Desc
 	rpcWaitOpsDesc  *prometheus.Desc
@@ -82,7 +84,7 @@ type rpcErrorAccum struct {
 	values   [8]string
 }
 
-func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *BPFCounterCollector {
+func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter) *BPFCounterCollector {
 	return &BPFCounterCollector{
 		lliteMap:      lliteMap,
 		rpcMap:        rpcMap,
@@ -91,6 +93,7 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.M
 		mountInfos:    mountInfos,
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
+		processFilter: processFilter,
 		lliteAcc:      map[string]*lliteAccum{},
 		rpcAcc:        map[string]*rpcAccum{},
 		lliteErrorAcc: map[string]*lliteErrorAccum{},
@@ -194,7 +197,8 @@ func (c *BPFCounterCollector) StartDrain(ctx context.Context, interval time.Dura
 	}()
 }
 
-// DrainOnce reads both BPF counter maps and accumulates values.
+// DrainOnce reads both BPF counter maps, accumulates values, and updates
+// the dynamic tail-trim set based on the accumulated per-process ops.
 func (c *BPFCounterCollector) DrainOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -211,6 +215,26 @@ func (c *BPFCounterCollector) DrainOnce() {
 	if c.rpcErrorMap != nil {
 		c.drainRPCErrors(c.rpcErrorMap)
 	}
+
+	// Update the dynamic tail-trim set from accumulated ops.
+	if c.processFilter != nil && c.processFilter.trimPercent > 0 && c.processFilter.allowlist == nil {
+		c.processFilter.UpdateTrimSet(c.opsPerProcess())
+	}
+}
+
+// opsPerProcess aggregates total ops per process name across all
+// accumulator maps. Used for tail-trim ranking.
+func (c *BPFCounterCollector) opsPerProcess() map[string]float64 {
+	m := make(map[string]float64)
+	// lliteAcc values[6] = process (position in lliteLabels: fs,mount,intent,op,uid,username,process,...)
+	for _, acc := range c.lliteAcc {
+		m[acc.values[6]] += acc.opsCount
+	}
+	// rpcAcc values[5] = process (position in ptlrpcLabels: fs,mount,op,uid,username,process,...)
+	for _, acc := range c.rpcAcc {
+		m[acc.values[5]] += acc.opsCount
+	}
+	return m
 }
 
 // drainCounterMap iterates a BPF counter map, invokes onEntry for each
@@ -247,6 +271,10 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
 		const slurmJobID = ""
+		process := sanitizeComm(key.Comm[:])
+		if c.processFilter != nil {
+			process = c.processFilter.Normalize(process)
+		}
 		vals := [9]string{
 			fsName,
 			mountPath,
@@ -254,7 +282,7 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 			rawOpToName(key.Op),
 			strconv.FormatUint(uint64(key.UID), 10),
 			c.resolver.Resolve(key.UID),
-			sanitizeComm(key.Comm[:]),
+			process,
 			actorTypeName(key.ActorType),
 			slurmJobID,
 		}
@@ -274,13 +302,17 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
+		process := sanitizeComm(key.Comm[:])
+		if c.processFilter != nil {
+			process = c.processFilter.Normalize(process)
+		}
 		vals := [8]string{
 			fsName,
 			mountPath,
 			rawOpToName(key.Op),
 			strconv.FormatUint(uint64(key.UID), 10),
 			c.resolver.Resolve(key.UID),
-			sanitizeComm(key.Comm[:]),
+			process,
 			actorTypeName(key.ActorType),
 			slurmJobID,
 		}
@@ -325,6 +357,10 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
+		process := sanitizeComm(key.Comm[:])
+		if c.processFilter != nil {
+			process = c.processFilter.Normalize(process)
+		}
 		vals := [10]string{
 			fsName,
 			mountPath,
@@ -332,7 +368,7 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 			rawOpToName(key.Op),
 			strconv.FormatUint(uint64(key.UID), 10),
 			c.resolver.Resolve(key.UID),
-			sanitizeComm(key.Comm[:]),
+			process,
 			actorTypeName(key.ActorType),
 			slurmJobID,
 			errnoClassName(key.Reason),
@@ -356,13 +392,17 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		if eventName == "" {
 			eventName = unknownRPCEvent
 		}
+		process := sanitizeComm(key.Comm[:])
+		if c.processFilter != nil {
+			process = c.processFilter.Normalize(process)
+		}
 		vals := [8]string{
 			fsName,
 			mountPath,
 			eventName,
 			strconv.FormatUint(uint64(key.UID), 10),
 			c.resolver.Resolve(key.UID),
-			sanitizeComm(key.Comm[:]),
+			process,
 			actorTypeName(key.ActorType),
 			slurmJobID,
 		}

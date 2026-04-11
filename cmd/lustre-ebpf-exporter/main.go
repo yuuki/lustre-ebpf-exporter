@@ -35,6 +35,7 @@ func main() {
 	var slurmTTLSeconds int
 	var slurmNegativeTTLSeconds int
 	var slurmVerifyTTLSeconds int
+	var processAllowlist string
 
 	flag.Var(&mounts, "mount", "Lustre client mount path (can be specified multiple times)")
 	flag.IntVar(&drainIntervalSeconds, "drain-interval", 5, "BPF counter map drain interval in seconds")
@@ -58,6 +59,9 @@ func main() {
 	flag.IntVar(&slurmNegativeTTLSeconds, "slurm-jobid-negative-ttl", 5, "Cache TTL in seconds for a negative (unresolved) Slurm job id lookup")
 	flag.IntVar(&slurmVerifyTTLSeconds, "slurm-jobid-verify-ttl", 1, "Grace period in seconds before re-checking /proc/<pid>/stat for pid reuse")
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
+	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\". Takes priority over --process-tail-trim-percent")
+	flag.Float64Var(&cfg.ProcessTailTrimPercent, "process-tail-trim-percent", 0, "Dynamically trim the bottom N% of processes by operation count each drain interval (0 to disable)")
+	flag.IntVar(&cfg.ProcessTailTrimHysteresis, "process-tail-trim-hysteresis", 3, "Consecutive drain cycles a process must be in the trim set before actually trimming")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -105,6 +109,18 @@ func main() {
 	cfg.SlurmJobIDNegativeTTL = time.Duration(slurmNegativeTTLSeconds) * time.Second
 	cfg.SlurmJobIDVerifyTTL = time.Duration(slurmVerifyTTLSeconds) * time.Second
 
+	if processAllowlist != "" {
+		for _, name := range strings.Split(processAllowlist, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				cfg.ProcessAllowlist = append(cfg.ProcessAllowlist, name)
+			}
+		}
+	}
+	if cfg.ProcessTailTrimPercent < 0 || cfg.ProcessTailTrimPercent > 100 {
+		log.Fatal("--process-tail-trim-percent must be between 0 and 100")
+	}
+
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
 	log.Printf("BPF counter drain interval: %s", cfg.DrainInterval)
@@ -113,6 +129,11 @@ func main() {
 			cfg.SlurmJobIDTTL, cfg.SlurmJobIDNegativeTTL, cfg.SlurmJobIDVerifyTTL, cfg.SlurmJobIDCacheSize)
 	} else {
 		log.Printf("Slurm job id resolution: disabled (label emitted as empty string)")
+	}
+	if len(cfg.ProcessAllowlist) > 0 {
+		log.Printf("Process allowlist: %s (all others become \"other\")", strings.Join(cfg.ProcessAllowlist, ", "))
+	} else if cfg.ProcessTailTrimPercent > 0 {
+		log.Printf("Process tail-trim: bottom %.0f%% by ops (hysteresis=%d cycles)", cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
