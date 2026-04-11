@@ -92,7 +92,7 @@ type rpcErrorAccum struct {
 }
 
 func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *BPFCounterCollector {
-	return &BPFCounterCollector{
+	c := &BPFCounterCollector{
 		lliteMap:      lliteMap,
 		rpcMap:        rpcMap,
 		lliteErrorMap: lliteErrorMap,
@@ -133,22 +133,25 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 			"Aggregated ptlrpc error/recovery event count",
 			rpcErrorLabels, nil,
 		),
-		pccOpsDesc: prometheus.NewDesc(
+	}
+	if pccMap != nil {
+		c.pccOpsDesc = prometheus.NewDesc(
 			"lustre_client_pcc_operations_total",
 			"Aggregated PCC I/O operation count",
 			lliteLabels, nil,
-		),
-		pccBytesDesc: prometheus.NewDesc(
+		)
+		c.pccBytesDesc = prometheus.NewDesc(
 			"lustre_client_pcc_data_bytes_total",
 			"Aggregated PCC data volume in bytes",
 			lliteLabels, nil,
-		),
-		pccErrorsDesc: prometheus.NewDesc(
+		)
+		c.pccErrorsDesc = prometheus.NewDesc(
 			"lustre_client_pcc_operation_errors_total",
 			"Aggregated PCC operation error count by errno class",
 			lliteErrLabels, nil,
-		),
+		)
 	}
+	return c
 }
 
 // Describe implements prometheus.Collector.
@@ -158,9 +161,11 @@ func (c *BPFCounterCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.rpcWaitOpsDesc
 	ch <- c.accessErrorsDesc
 	ch <- c.rpcErrorsDesc
-	ch <- c.pccOpsDesc
-	ch <- c.pccBytesDesc
-	ch <- c.pccErrorsDesc
+	if c.pccOpsDesc != nil {
+		ch <- c.pccOpsDesc
+		ch <- c.pccBytesDesc
+		ch <- c.pccErrorsDesc
+	}
 }
 
 // Collect implements prometheus.Collector. Called at scrape time.
@@ -206,26 +211,28 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 			)
 		}
 	}
-	for _, acc := range c.pccAcc {
-		if acc.opsCount > 0 {
-			ch <- prometheus.MustNewConstMetric(
-				c.pccOpsDesc, prometheus.CounterValue, acc.opsCount,
-				acc.values[:]...,
-			)
+	if c.pccOpsDesc != nil {
+		for _, acc := range c.pccAcc {
+			if acc.opsCount > 0 {
+				ch <- prometheus.MustNewConstMetric(
+					c.pccOpsDesc, prometheus.CounterValue, acc.opsCount,
+					acc.values[:]...,
+				)
+			}
+			if acc.bytesSum > 0 {
+				ch <- prometheus.MustNewConstMetric(
+					c.pccBytesDesc, prometheus.CounterValue, acc.bytesSum,
+					acc.values[:]...,
+				)
+			}
 		}
-		if acc.bytesSum > 0 {
-			ch <- prometheus.MustNewConstMetric(
-				c.pccBytesDesc, prometheus.CounterValue, acc.bytesSum,
-				acc.values[:]...,
-			)
-		}
-	}
-	for _, acc := range c.pccErrorAcc {
-		if acc.opsCount > 0 {
-			ch <- prometheus.MustNewConstMetric(
-				c.pccErrorsDesc, prometheus.CounterValue, acc.opsCount,
-				acc.values[:]...,
-			)
+		for _, acc := range c.pccErrorAcc {
+			if acc.opsCount > 0 {
+				ch <- prometheus.MustNewConstMetric(
+					c.pccErrorsDesc, prometheus.CounterValue, acc.opsCount,
+					acc.values[:]...,
+				)
+			}
 		}
 	}
 }

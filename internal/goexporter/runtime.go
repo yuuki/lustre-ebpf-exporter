@@ -47,11 +47,14 @@ func Run(ctx context.Context, cfg Config) error {
 
 	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
-	pccMap, pccErrorMap := source.PccCounterMaps()
+	var pccMap, pccErrorMap *ebpf.Map
+	if cfg.PCCEnabled {
+		pccMap, pccErrorMap = source.PccCounterMaps()
+	}
 	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
-	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector)
+	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled)
 	if err != nil {
 		return err
 	}
@@ -120,6 +123,9 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 	}
 
 	if event.Plane == PlanePCC {
+		if !exporter.PCCEnabled {
+			return
+		}
 		processPCCEvent(event, exporter, resolver, slurmResolver)
 		return
 	}

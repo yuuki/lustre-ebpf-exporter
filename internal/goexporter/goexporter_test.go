@@ -157,7 +157,7 @@ func testResolver() *UsernameResolver {
 func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
 func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestBpfErrorCounterValSize(t *testing.T) {
 func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -804,7 +804,7 @@ func TestParseObserverEventPCC(t *testing.T) {
 
 func TestDirectObservePCCHistogram(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -833,7 +833,7 @@ func TestDirectObservePCCHistogram(t *testing.T) {
 
 func TestPCCSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -883,7 +883,7 @@ func TestPCCAttachDecoding(t *testing.T) {
 
 func TestPCCAttachEvent(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -930,7 +930,7 @@ func TestPCCAttachEvent(t *testing.T) {
 
 func TestPCCDetachAndInvalidateEvents(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}

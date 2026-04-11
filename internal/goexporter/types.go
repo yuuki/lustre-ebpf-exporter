@@ -310,6 +310,11 @@ type Config struct {
 	SlurmJobIDVerifyTTL time.Duration
 	// SlurmJobIDCacheSize bounds the number of cached pids.
 	SlurmJobIDCacheSize int
+
+	// PCCEnabled turns on PCC (Persistent Client Cache) metrics collection.
+	// When false (default), PCC kprobes are not attached and PCC metrics
+	// are not registered.
+	PCCEnabled bool
 }
 
 type Event struct {

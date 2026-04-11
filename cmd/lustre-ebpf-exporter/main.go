@@ -58,6 +58,7 @@ func main() {
 	flag.IntVar(&slurmNegativeTTLSeconds, "slurm-jobid-negative-ttl", 5, "Cache TTL in seconds for a negative (unresolved) Slurm job id lookup")
 	flag.IntVar(&slurmVerifyTTLSeconds, "slurm-jobid-verify-ttl", 1, "Grace period in seconds before re-checking /proc/<pid>/stat for pid reuse")
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
+	flag.BoolVar(&cfg.PCCEnabled, "collector.pcc", false, "Enable PCC (Persistent Client Cache) metrics collection")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -113,6 +114,11 @@ func main() {
 			cfg.SlurmJobIDTTL, cfg.SlurmJobIDNegativeTTL, cfg.SlurmJobIDVerifyTTL, cfg.SlurmJobIDCacheSize)
 	} else {
 		log.Printf("Slurm job id resolution: disabled (label emitted as empty string)")
+	}
+	if cfg.PCCEnabled {
+		log.Printf("PCC metrics: enabled")
+	} else {
+		log.Printf("PCC metrics: disabled")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
