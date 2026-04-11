@@ -216,8 +216,7 @@ func (c *BPFCounterCollector) DrainOnce() {
 		c.drainRPCErrors(c.rpcErrorMap)
 	}
 
-	// Update the dynamic tail-trim set from accumulated ops.
-	if c.processFilter != nil && c.processFilter.trimPercent > 0 && c.processFilter.allowlist == nil {
+	if c.processFilter.ShouldUpdateTrimSet() {
 		c.processFilter.UpdateTrimSet(c.opsPerProcess())
 	}
 }
@@ -271,10 +270,7 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
 		const slurmJobID = ""
-		process := sanitizeComm(key.Comm[:])
-		if c.processFilter != nil {
-			process = c.processFilter.Normalize(process)
-		}
+		process := c.normalizeProcess(key.Comm)
 		vals := [9]string{
 			fsName,
 			mountPath,
@@ -302,10 +298,7 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
-		process := sanitizeComm(key.Comm[:])
-		if c.processFilter != nil {
-			process = c.processFilter.Normalize(process)
-		}
+		process := c.normalizeProcess(key.Comm)
 		vals := [8]string{
 			fsName,
 			mountPath,
@@ -357,10 +350,7 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
-		process := sanitizeComm(key.Comm[:])
-		if c.processFilter != nil {
-			process = c.processFilter.Normalize(process)
-		}
+		process := c.normalizeProcess(key.Comm)
 		vals := [10]string{
 			fsName,
 			mountPath,
@@ -392,10 +382,7 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		if eventName == "" {
 			eventName = unknownRPCEvent
 		}
-		process := sanitizeComm(key.Comm[:])
-		if c.processFilter != nil {
-			process = c.processFilter.Normalize(process)
-		}
+		process := c.normalizeProcess(key.Comm)
 		vals := [8]string{
 			fsName,
 			mountPath,
@@ -423,6 +410,10 @@ func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
 		return mi.Path, mi.FSName
 	}
 	return "", ""
+}
+
+func (c *BPFCounterCollector) normalizeProcess(comm [16]byte) string {
+	return c.processFilter.Normalize(sanitizeComm(comm[:]))
 }
 
 func rawOpToName(raw uint8) string {
