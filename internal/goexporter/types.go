@@ -276,6 +276,18 @@ type Config struct {
 	SlurmJobIDVerifyTTL time.Duration
 	// SlurmJobIDCacheSize bounds the number of cached pids.
 	SlurmJobIDCacheSize int
+
+	// ProcessAllowlist is a static list of process names that pass through
+	// as-is; all others are replaced with "other". When set, it takes
+	// priority over ProcessTailTrimPercent.
+	ProcessAllowlist []string
+	// ProcessTailTrimPercent (0–100) dynamically trims the bottom N% of
+	// processes by operation count each drain interval. 0 disables trimming.
+	ProcessTailTrimPercent float64
+	// ProcessTailTrimHysteresis is the number of consecutive drain cycles
+	// a process must remain in the trim candidate set before it is actually
+	// trimmed. Prevents label churn from borderline processes. Default: 3.
+	ProcessTailTrimHysteresis int
 }
 
 type Event struct {

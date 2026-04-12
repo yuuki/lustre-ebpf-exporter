@@ -43,10 +43,11 @@ func Run(ctx context.Context, cfg Config) error {
 	resolver := NewUsernameResolver()
 	slurmResolver := newSlurmResolverFromConfig(cfg)
 	procNameResolver := NewProcNameResolver()
+	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis)
 
 	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, mountInfos, resolver, slurmResolver)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, mountInfos, resolver, slurmResolver, processFilter)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
 	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector)
@@ -93,22 +94,23 @@ func Run(ctx context.Context, cfg Config) error {
 			} else {
 				log.Printf("warning: event has unknown mount index %d", event.MountIdx)
 			}
-			event.Comm = procNameResolver.Resolve(event.PID, event.Comm)
+			rawComm := procNameResolver.Resolve(event.PID, event.Comm)
+			event.Comm = processFilter.Normalize(rawComm)
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
-			processEvent(event, exporter, inflightTracker, resolver, slurmResolver)
+			processEvent(event, rawComm, exporter, inflightTracker, resolver, slurmResolver)
 		}
 	}
 }
 
-func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
+func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
 	if event.Plane == PlaneLLite {
 		intent := AccessIntentForOp(event.Op)
 		if intent == "" || event.DurationUS == 0 {
 			return
 		}
-		uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
 		// Positional order must match lliteLabels in prometheus.go.
 		exporter.AccessLatency.WithLabelValues(
 			event.FSName, event.MountPath, intent, event.Op,
@@ -123,7 +125,7 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 
 	if event.Op == OpQueueWait {
 		if event.DurationUS > 0 {
-			uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+			uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
 			// Positional order must match ptlrpcLabels in prometheus.go.
 			exporter.RPCWaitLat.WithLabelValues(
 				event.FSName, event.MountPath, event.Op,
@@ -143,16 +145,20 @@ func processEvent(event Event, exporter *PrometheusExporter, inflight *InflightT
 	default:
 		return
 	}
-	uid, username, actorType, slurmJobID := resolveEventIdentity(event, resolver, slurmResolver)
+	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
 	labels := baseLabelValues(event, uid, username, actorType, slurmJobID)
 	counter.WithLabelValues(labels...).Inc()
 	inflight.Update(delta, event, uid, username, actorType, slurmJobID)
 }
 
-func resolveEventIdentity(event Event, resolver *UsernameResolver, slurmResolver *slurm.Resolver) (uid, username, actorType, slurmJobID string) {
+// resolveEventIdentity resolves identity labels for an event. rawComm is
+// the original process name before normalization; it is used for actor-type
+// classification so that processes collapsed to "other" by the process
+// filter retain their correct actor type.
+func resolveEventIdentity(event Event, rawComm string, resolver *UsernameResolver, slurmResolver *slurm.Resolver) (uid, username, actorType, slurmJobID string) {
 	uid = strconv.FormatUint(uint64(event.UID), 10)
 	username = resolver.Resolve(event.UID)
-	actorType = ClassifyActorType(event.Comm)
+	actorType = ClassifyActorType(rawComm)
 	slurmJobID = slurmResolver.Resolve(event.PID).JobID
 	return
 }
