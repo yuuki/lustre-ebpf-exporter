@@ -56,7 +56,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer exporter.Shutdown(context.Background())
 
-	inflightTracker := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+	inflightTracker := NewInflightTracker(exporter.Inflight)
 
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 

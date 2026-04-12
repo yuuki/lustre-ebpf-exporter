@@ -5,26 +5,20 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
 
 // InflightTracker tracks in-flight PtlRPC requests with zero-clamping
 // and updates a Prometheus GaugeVec. Thread-safe.
 type InflightTracker struct {
-	mu       sync.Mutex
-	counts   map[string]float64
-	gauge    *prometheus.GaugeVec
-	resolver *UsernameResolver
-	slurm    *slurm.Resolver
+	mu     sync.Mutex
+	counts map[string]float64
+	gauge  *prometheus.GaugeVec
 }
 
-func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *InflightTracker {
+func NewInflightTracker(gauge *prometheus.GaugeVec) *InflightTracker {
 	return &InflightTracker{
-		counts:   map[string]float64{},
-		gauge:    gauge,
-		resolver: resolver,
-		slurm:    slurmResolver,
+		counts: map[string]float64{},
+		gauge:  gauge,
 	}
 }
 

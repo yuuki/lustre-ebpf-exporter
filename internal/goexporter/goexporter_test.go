@@ -164,7 +164,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
@@ -228,7 +228,7 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	})
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
@@ -269,7 +269,7 @@ func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd",
@@ -297,7 +297,7 @@ func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, "dd", exporter, inflight, resolver, testSlurmResolver())
 
@@ -318,8 +318,7 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 		prometheus.GaugeOpts{Name: "test_inflight", Help: "test"},
 		baseLabels,
 	)
-	resolver := testResolver()
-	tracker := NewInflightTracker(gauge, resolver, testSlurmResolver())
+	tracker := NewInflightTracker(gauge)
 
 	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -342,8 +341,7 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 		prometheus.GaugeOpts{Name: "test_inflight2", Help: "test"},
 		baseLabels,
 	)
-	resolver := testResolver()
-	tracker := NewInflightTracker(gauge, resolver, testSlurmResolver())
+	tracker := NewInflightTracker(gauge)
 
 	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -424,7 +422,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	// Feed events through the direct pipeline
 	processEvent(Event{
@@ -675,7 +673,7 @@ func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 
 	resolver := testResolver()
 	slurmResolver := testSlurmResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	sendEvt := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 	freeEvt := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
