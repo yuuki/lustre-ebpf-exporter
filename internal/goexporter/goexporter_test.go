@@ -157,14 +157,14 @@ func testResolver() *UsernameResolver {
 func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
@@ -199,7 +199,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	})
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, true)
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
@@ -256,20 +256,19 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	}
 }
 
-// TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel verifies that when
-// the resolver is disabled the slurm_job_id label is still present in the
-// schema but has an empty value.
-func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
+// TestDirectObserveSlurmDisabledAbsentsLabel verifies that when slurmEnabled=false,
+// the slurm_job_id label is completely absent from the rendered metrics output.
+func TestDirectObserveSlurmDisabledAbsentsLabel(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd",
@@ -280,8 +279,8 @@ func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, `slurm_job_id=""`) {
-		t.Fatalf("expected empty slurm_job_id label in rendered metrics, got: %s", text)
+	if strings.Contains(text, "slurm_job_id") {
+		t.Fatalf("expected slurm_job_id to be absent when slurmEnabled=false, got: %s", text)
 	}
 }
 
@@ -290,14 +289,14 @@ func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
 func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 
 	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, "dd", exporter, inflight, resolver, testSlurmResolver())
 
@@ -318,7 +317,7 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 		prometheus.GaugeOpts{Name: "test_inflight", Help: "test"},
 		baseLabels,
 	)
-	tracker := NewInflightTracker(gauge)
+	tracker := NewInflightTracker(gauge, true)
 
 	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -341,7 +340,7 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 		prometheus.GaugeOpts{Name: "test_inflight2", Help: "test"},
 		baseLabels,
 	)
-	tracker := NewInflightTracker(gauge)
+	tracker := NewInflightTracker(gauge, true)
 
 	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -415,14 +414,14 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 
 	// Feed events through the direct pipeline
 	processEvent(Event{
@@ -665,7 +664,7 @@ func TestBpfErrorCounterValSize(t *testing.T) {
 func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +672,7 @@ func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 
 	resolver := testResolver()
 	slurmResolver := testSlurmResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 
 	sendEvt := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 	freeEvt := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
@@ -685,8 +684,8 @@ func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	processEvent(freeEvt, freeEvt.Comm, exporter, inflight, resolver, slurmResolver)
 	processEvent(freeEvt, freeEvt.Comm, exporter, inflight, resolver, slurmResolver)
 
-	// Positional order matches baseLabels.
-	labels := []string{"lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", ""}
+	// Positional order matches baseLabelsNoSlurm (slurmEnabled=false).
+	labels := []string{"lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user"}
 	started := exporter.RequestsStarted.WithLabelValues(labels...)
 	completed := exporter.RequestsCompleted.WithLabelValues(labels...)
 
@@ -802,14 +801,14 @@ func TestParseObserverEventPCC(t *testing.T) {
 
 func TestDirectObservePCCHistogram(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 	slurmResolver := testSlurmResolver()
 
 	events := []Event{
@@ -831,14 +830,14 @@ func TestDirectObservePCCHistogram(t *testing.T) {
 
 func TestPCCSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 	slurmResolver := testSlurmResolver()
 
 	event := Event{Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp", DurationUS: 0, SizeBytes: 4096, MountPath: "/mnt/lustre", FSName: "lustrefs"}
@@ -881,14 +880,14 @@ func TestPCCAttachDecoding(t *testing.T) {
 
 func TestPCCAttachEvent(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 	slurmResolver := testSlurmResolver()
 
 	// Successful RO auto-attach.
@@ -928,14 +927,14 @@ func TestPCCAttachEvent(t *testing.T) {
 
 func TestPCCDetachAndInvalidateEvents(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight)
+	inflight := NewInflightTracker(exporter.Inflight, false)
 	slurmResolver := testSlurmResolver()
 
 	detachEvent := Event{

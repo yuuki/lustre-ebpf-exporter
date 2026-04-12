@@ -21,7 +21,22 @@ var (
 	lliteErrLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"}
 	rpcErrorLabels  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type", "slurm_job_id"}
 	pccAttachLabels = []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type", "slurm_job_id"}
+
+	baseLabelsNoSlurm      = []string{"fs", "mount", "uid", "username", "process", "actor_type"}
+	ptlrpcLabelsNoSlurm    = []string{"fs", "mount", "op", "uid", "username", "process", "actor_type"}
+	lliteLabelsNoSlurm     = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"}
+	lliteErrLabelsNoSlurm  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "errno_class"}
+	rpcErrorLabelsNoSlurm  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type"}
+	pccAttachLabelsNoSlurm = []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type"}
 )
+
+// pickLabels returns with if slurmEnabled, otherwise without.
+func pickLabels(slurmEnabled bool, with, without []string) []string {
+	if slurmEnabled {
+		return with
+	}
+	return without
+}
 
 // PrometheusExporter serves Prometheus metrics via HTTP.
 // Histograms and gauges are updated directly; counters are provided
@@ -31,7 +46,8 @@ type PrometheusExporter struct {
 	server   *http.Server
 	listener net.Listener
 
-	PCCEnabled bool
+	PCCEnabled  bool
+	SlurmEnabled bool
 
 	AccessLatency     *prometheus.HistogramVec
 	RPCWaitLat        *prometheus.HistogramVec
@@ -47,36 +63,37 @@ type PrometheusExporter struct {
 	PCCInvalidationsTotal  *prometheus.CounterVec
 }
 
-func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool) (*PrometheusExporter, error) {
+func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool, slurmEnabled bool) (*PrometheusExporter, error) {
 	registry := prometheus.NewRegistry()
 	exporter := &PrometheusExporter{
-		registry:   registry,
-		PCCEnabled: pccEnabled,
+		registry:     registry,
+		PCCEnabled:   pccEnabled,
+		SlurmEnabled: slurmEnabled,
 		AccessLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			lliteLabels,
+			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm),
 		),
 		RPCWaitLat: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			ptlrpcLabels,
+			pickLabels(slurmEnabled,ptlrpcLabels, ptlrpcLabelsNoSlurm),
 		),
 		Inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
-			baseLabels,
+			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
 		),
 		RequestsStarted: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_ptlrpc_requests_started_total",
 				Help: "Total ptlrpc requests sent (ptlrpc_send_new_req events)",
 			},
-			baseLabels,
+			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
 		),
 		RequestsCompleted: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_ptlrpc_requests_completed_total",
 				Help: "Total ptlrpc requests freed (__ptlrpc_free_req events)",
 			},
-			baseLabels,
+			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
 		),
 	}
 
@@ -92,35 +109,35 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 				Help:    "PCC I/O operation latency in seconds",
 				Buckets: PrometheusLatencyBucketsSeconds,
 			},
-			lliteLabels,
+			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm),
 		)
 		exporter.PCCAttachTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_attach_total",
 				Help: "Total PCC attach attempts",
 			},
-			pccAttachLabels,
+			pickLabels(slurmEnabled,pccAttachLabels, pccAttachLabelsNoSlurm),
 		)
 		exporter.PCCAttachFailuresTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_attach_failures_total",
 				Help: "Total PCC attach failures",
 			},
-			pccAttachLabels,
+			pickLabels(slurmEnabled,pccAttachLabels, pccAttachLabelsNoSlurm),
 		)
 		exporter.PCCDetachTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_detach_total",
 				Help: "Total PCC detach operations",
 			},
-			baseLabels,
+			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
 		)
 		exporter.PCCInvalidationsTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_layout_invalidations_total",
 				Help: "Total PCC layout invalidation events",
 			},
-			baseLabels,
+			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
 		)
 		collectors = append(collectors,
 			exporter.PCCLatency,

@@ -10,15 +10,17 @@ import (
 // InflightTracker tracks in-flight PtlRPC requests with zero-clamping
 // and updates a Prometheus GaugeVec. Thread-safe.
 type InflightTracker struct {
-	mu     sync.Mutex
-	counts map[string]float64
-	gauge  *prometheus.GaugeVec
+	mu           sync.Mutex
+	counts       map[string]float64
+	gauge        *prometheus.GaugeVec
+	slurmEnabled bool
 }
 
-func NewInflightTracker(gauge *prometheus.GaugeVec) *InflightTracker {
+func NewInflightTracker(gauge *prometheus.GaugeVec, slurmEnabled bool) *InflightTracker {
 	return &InflightTracker{
-		counts: map[string]float64{},
-		gauge:  gauge,
+		counts:       map[string]float64{},
+		gauge:        gauge,
+		slurmEnabled: slurmEnabled,
 	}
 }
 
@@ -28,7 +30,12 @@ func NewInflightTracker(gauge *prometheus.GaugeVec) *InflightTracker {
 // hot path does not pay for username/slurm lookups twice when the caller
 // also needs them for sibling counters.
 func (t *InflightTracker) Update(delta float64, event Event, uid, username, actorType, slurmJobID string) {
-	key := joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
+	var key string
+	if t.slurmEnabled {
+		key = joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
+	} else {
+		key = joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType)
+	}
 
 	t.mu.Lock()
 	t.counts[key] += delta
@@ -41,14 +48,41 @@ func (t *InflightTracker) Update(delta float64, event Event, uid, username, acto
 	}
 	t.mu.Unlock()
 
-	t.gauge.WithLabelValues(baseLabelValues(event, uid, username, actorType, slurmJobID)...).Set(val)
+	t.gauge.WithLabelValues(baseLabelValues(event, uid, username, actorType, slurmJobID, t.slurmEnabled)...).Set(val)
 }
 
-// baseLabelValues returns label values in baseLabels positional order.
-// Centralizing this prevents drift between the gauge, counters, and any
-// future metric that shares the base label schema.
-func baseLabelValues(event Event, uid, username, actorType, slurmJobID string) []string {
-	return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID}
+// baseLabelValues returns label values in baseLabels or baseLabelsNoSlurm positional order
+// depending on slurmEnabled. Centralizing this prevents drift between the gauge, counters,
+// and any future metric that shares the base label schema.
+func baseLabelValues(event Event, uid, username, actorType, slurmJobID string, slurmEnabled bool) []string {
+	if slurmEnabled {
+		return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID}
+	}
+	return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType}
+}
+
+// lliteLabelValues returns label values in lliteLabels or lliteLabelsNoSlurm positional order.
+func lliteLabelValues(fsName, mountPath, intent, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled bool) []string {
+	if slurmEnabled {
+		return []string{fsName, mountPath, intent, op, uid, username, comm, actorType, slurmJobID}
+	}
+	return []string{fsName, mountPath, intent, op, uid, username, comm, actorType}
+}
+
+// ptlrpcLabelValues returns label values in ptlrpcLabels or ptlrpcLabelsNoSlurm positional order.
+func ptlrpcLabelValues(fsName, mountPath, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled bool) []string {
+	if slurmEnabled {
+		return []string{fsName, mountPath, op, uid, username, comm, actorType, slurmJobID}
+	}
+	return []string{fsName, mountPath, op, uid, username, comm, actorType}
+}
+
+// pccAttachLabelValues returns label values in pccAttachLabels or pccAttachLabelsNoSlurm positional order.
+func pccAttachLabelValues(fsName, mountPath, mode, trigger, uid, username, comm, actorType, slurmJobID string, slurmEnabled bool) []string {
+	if slurmEnabled {
+		return []string{fsName, mountPath, mode, trigger, uid, username, comm, actorType, slurmJobID}
+	}
+	return []string{fsName, mountPath, mode, trigger, uid, username, comm, actorType}
 }
 
 // labelKeySep is used to join positional label values into a cache key.

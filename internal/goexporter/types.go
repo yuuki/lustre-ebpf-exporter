@@ -325,8 +325,11 @@ type Config struct {
 	ProcessTailTrimPercent float64
 	// ProcessTailTrimHysteresis is the number of consecutive drain cycles
 	// a process must remain in the trim candidate set before it is actually
-	// trimmed. Prevents label churn from borderline processes. Default: 3.
+	// trimmed. Prevents label churn from borderline processes. Default: 1.
 	ProcessTailTrimHysteresis int
+	// ProcessNameStripSuffix removes trailing separator+digits suffixes from
+	// process names before allowlist/trim checks (e.g. "Bun Pool 1" → "Bun Pool").
+	ProcessNameStripSuffix bool
 }
 
 type Event struct {

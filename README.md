@@ -154,7 +154,7 @@ Label cardinality is intentionally constrained:
 ### Process Label Cardinality Control
 
 On busy Lustre clients, hundreds of distinct process names can appear, inflating metric
-cardinality. Three flags work together to keep the `process` label manageable.
+cardinality. Four flags work together to keep the `process` label manageable.
 
 #### `--process-allowlist` (static filtering)
 
@@ -199,13 +199,35 @@ their real name and `"other"` across successive scrapes.
 If a process moves out of the trim candidate set in any cycle, its consecutive counter
 resets to zero immediately. Default is 1 (trim on the first qualifying cycle).
 
+#### `--process-name-strip-suffix` (numeric suffix normalization)
+
+Many runtimes and thread pools append numeric identifiers to process names
+(e.g. "Bun Pool 1", "Bun Pool 2", "worker-3", "thread_42"). Each numbered
+variant becomes a distinct Prometheus label, causing cardinality explosion.
+
+This flag strips the trailing separator+digits suffix, collapsing all
+variants to a single canonical name:
+
+```bash
+--process-name-strip-suffix
+# "Bun Pool 1", "Bun Pool 2", "Bun Pool 3" → "Bun Pool"
+# "worker-3" → "worker"
+# "thread_42" → "thread"
+```
+
+Recognised separators: space (` `), dash (`-`), underscore (`_`), colon (`:`).
+Period is intentionally excluded so version-like names (`python3.11`, `go1.21`)
+are not affected.
+
+Stripping is applied **before** allowlist and tail-trim checks, so those
+features operate on the normalized names. Disabled by default.
+
 #### Priority
 
-The flags are mutually exclusive in practice:
-
-1. If `--process-allowlist` is set, it takes absolute priority and tail-trimming is skipped.
-2. If `--process-tail-trim-percent` > 0 (and no allowlist), dynamic trimming applies.
-3. If neither is set, all process names pass through unchanged.
+1. If `--process-name-strip-suffix` is set, trailing separator+digits suffixes are stripped first.
+2. If `--process-allowlist` is set, it takes absolute priority and tail-trimming is skipped.
+3. If `--process-tail-trim-percent` > 0 (and no allowlist), dynamic trimming applies.
+4. If none are set, all process names pass through unchanged.
 
 ### Metric Coverage by Implementation
 
@@ -273,6 +295,7 @@ Useful flags:
 - `--process-allowlist` (comma-separated list of process names to track; all others become `"other"`)
 - `--process-tail-trim-percent` (dynamically trim the bottom N% of processes by operation count; default 0 = disabled)
 - `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 1)
+- `--process-name-strip-suffix` (strip trailing separator+digits from process names; default `false`)
 - `--web.listen-address`
 - `--web.telemetry-path`
 - `--version`
