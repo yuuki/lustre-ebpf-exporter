@@ -74,7 +74,9 @@ func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int, s
 func (f *ProcessFilter) Normalize(process string, bpfComm ...string) string {
 	if f.stripSuffix {
 		process = stripTrailingNumericSuffix(process)
-		if len(bpfComm) > 0 {
+		// Only strip bpfComm when trim set is active; it is only used
+		// as a fallback for trim-set matching below.
+		if f.trimPercent > 0 && len(bpfComm) > 0 {
 			bpfComm[0] = stripTrailingNumericSuffix(bpfComm[0])
 		}
 	}
