@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -422,25 +421,6 @@ func (c *BPFCounterCollector) normalizeProcess(comm [16]byte, opsCount uint64) s
 		c.rawProcessOps[raw] += float64(opsCount)
 	}
 	return c.processFilter.Normalize(raw)
-}
-
-// joinLabelKey concatenates label values with labelKeySep using a
-// strings.Builder, avoiding the intermediate slice allocation of
-// strings.Join. Used by all drain callbacks.
-func joinLabelKey(parts ...string) string {
-	n := len(parts) - 1 // separators
-	for _, p := range parts {
-		n += len(p)
-	}
-	var b strings.Builder
-	b.Grow(n)
-	for i, p := range parts {
-		if i > 0 {
-			b.WriteString(labelKeySep)
-		}
-		b.WriteString(p)
-	}
-	return b.String()
 }
 
 func rawOpToName(raw uint8) string {

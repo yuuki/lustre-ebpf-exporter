@@ -1,6 +1,7 @@
 package goexporter
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,4 +56,23 @@ func baseLabelValues(event Event, uid, username, actorType, slurmJobID string) [
 // /proc, sanitized comms, or numeric ids, so collisions are impossible as
 // long as every call site uses the same arity.
 const labelKeySep = "\x00"
+
+// joinLabelKey concatenates label values with labelKeySep using a
+// strings.Builder, avoiding the intermediate slice allocation of
+// strings.Join.
+func joinLabelKey(parts ...string) string {
+	n := len(parts) - 1 // separators
+	for _, p := range parts {
+		n += len(p)
+	}
+	var b strings.Builder
+	b.Grow(n)
+	for i, p := range parts {
+		if i > 0 {
+			b.WriteString(labelKeySep)
+		}
+		b.WriteString(p)
+	}
+	return b.String()
+}
 
