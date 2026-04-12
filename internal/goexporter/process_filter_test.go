@@ -161,6 +161,49 @@ func TestProcessFilterTrimmedCount(t *testing.T) {
 	}
 }
 
+func TestProcessFilterBPFCommFallback(t *testing.T) {
+	t.Parallel()
+
+	// Trim set is built from BPF comm (15-char max).
+	// Full resolved name differs from BPF comm for long names.
+	f := NewProcessFilter(nil, 50, 1)
+
+	bpfComm := "python3.11-conf" // truncated at 15 chars
+	fullName := "python3.11-config"
+
+	ops := map[string]float64{
+		bpfComm: 1,
+		"dd":    1000,
+	}
+	f.UpdateTrimSet(ops)
+
+	// Without bpfComm fallback, fullName wouldn't match the trim set.
+	if got := f.Normalize(fullName, bpfComm); got != "other" {
+		t.Fatalf("expected other for long name with bpfComm fallback, got %q", got)
+	}
+	// Short name that matches directly should still work.
+	if got := f.Normalize("dd"); got != "dd" {
+		t.Fatalf("expected dd (not trimmed), got %q", got)
+	}
+}
+
+func TestProcessFilterBPFCommFallbackNotNeeded(t *testing.T) {
+	t.Parallel()
+
+	// When bpfComm equals the resolved name, no fallback needed.
+	f := NewProcessFilter(nil, 50, 1)
+
+	ops := map[string]float64{
+		"cat": 1,
+		"dd":  1000,
+	}
+	f.UpdateTrimSet(ops)
+
+	if got := f.Normalize("cat", "cat"); got != "other" {
+		t.Fatalf("expected other, got %q", got)
+	}
+}
+
 func TestProcessFilterIsActive(t *testing.T) {
 	t.Parallel()
 

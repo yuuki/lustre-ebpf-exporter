@@ -62,7 +62,12 @@ func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int) *
 
 // Normalize returns the filtered process name. Non-matching processes
 // are replaced with "other". Lock-free on the hot path.
-func (f *ProcessFilter) Normalize(process string) string {
+//
+// bpfComm is the optional BPF comm fallback name (max 15 chars). When
+// the trim set is built from BPF counter maps (which only have comm),
+// the full resolved name may not match. Passing bpfComm allows the
+// filter to check both names against the trim set.
+func (f *ProcessFilter) Normalize(process string, bpfComm ...string) string {
 	if f.allowlist != nil {
 		if _, ok := f.allowlist[process]; ok {
 			return process
@@ -74,6 +79,14 @@ func (f *ProcessFilter) Normalize(process string) string {
 		trimmed := f.trimmed.Load().(map[string]struct{})
 		if _, ok := trimmed[process]; ok {
 			return processOther
+		}
+		// The trim set is built from BPF comm (max 15 chars). If the
+		// resolved full name differs from the BPF comm, also check the
+		// BPF comm so that long process names are correctly trimmed.
+		if len(bpfComm) > 0 && bpfComm[0] != process {
+			if _, ok := trimmed[bpfComm[0]]; ok {
+				return processOther
+			}
 		}
 	}
 
