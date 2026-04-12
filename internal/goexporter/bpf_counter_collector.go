@@ -204,10 +204,19 @@ func (c *BPFCounterCollector) StartDrain(ctx context.Context, interval time.Dura
 }
 
 // DrainOnce reads both BPF counter maps, accumulates values, and updates
-// the dynamic tail-trim set based on per-process ops observed this cycle.
+// the dynamic tail-trim set. The trim set is updated BEFORE draining so
+// that the current drain's labels reflect the latest ranking, not the
+// previous cycle's.
 func (c *BPFCounterCollector) DrainOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Update trim set from the PREVIOUS drain's rawProcessOps before
+	// labeling the current drain. This eliminates the off-by-one where
+	// newly trimmed processes would only appear as "other" one drain late.
+	if c.processFilter.ShouldUpdateTrimSet() {
+		c.processFilter.UpdateTrimSet(c.opsPerProcess())
+	}
 
 	// Reset per-cycle ops so the trim ranking reflects only the latest
 	// drain window, preventing unbounded growth from short-lived processes.
@@ -224,10 +233,6 @@ func (c *BPFCounterCollector) DrainOnce() {
 	}
 	if c.rpcErrorMap != nil {
 		c.drainRPCErrors(c.rpcErrorMap)
-	}
-
-	if c.processFilter.ShouldUpdateTrimSet() {
-		c.processFilter.UpdateTrimSet(c.opsPerProcess())
 	}
 }
 
