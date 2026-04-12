@@ -18,7 +18,7 @@ func ClassifyActorType(comm string) string {
 }
 
 func AccessIntentForOp(op string) string {
-	if intent, ok := IntentForOp[op]; ok {
+	if intent, ok := intentForOp[op]; ok {
 		return intent
 	}
 	return ""

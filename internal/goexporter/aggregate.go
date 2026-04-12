@@ -5,26 +5,20 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
 )
 
 // InflightTracker tracks in-flight PtlRPC requests with zero-clamping
 // and updates a Prometheus GaugeVec. Thread-safe.
 type InflightTracker struct {
-	mu       sync.Mutex
-	counts   map[string]float64
-	gauge    *prometheus.GaugeVec
-	resolver *UsernameResolver
-	slurm    *slurm.Resolver
+	mu     sync.Mutex
+	counts map[string]float64
+	gauge  *prometheus.GaugeVec
 }
 
-func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, slurmResolver *slurm.Resolver) *InflightTracker {
+func NewInflightTracker(gauge *prometheus.GaugeVec) *InflightTracker {
 	return &InflightTracker{
-		counts:   map[string]float64{},
-		gauge:    gauge,
-		resolver: resolver,
-		slurm:    slurmResolver,
+		counts: map[string]float64{},
+		gauge:  gauge,
 	}
 }
 
@@ -34,7 +28,7 @@ func NewInflightTracker(gauge *prometheus.GaugeVec, resolver *UsernameResolver, 
 // hot path does not pay for username/slurm lookups twice when the caller
 // also needs them for sibling counters.
 func (t *InflightTracker) Update(delta float64, event Event, uid, username, actorType, slurmJobID string) {
-	key := baseLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
+	key := joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
 
 	t.mu.Lock()
 	t.counts[key] += delta
@@ -63,23 +57,22 @@ func baseLabelValues(event Event, uid, username, actorType, slurmJobID string) [
 // long as every call site uses the same arity.
 const labelKeySep = "\x00"
 
-// baseLabelKey joins the base label values in baseLabels order (see prometheus.go).
-func baseLabelKey(fs, mount, uid, username, process, actorType, slurmJobID string) string {
-	total := len(fs) + len(mount) + len(uid) + len(username) + len(process) + len(actorType) + len(slurmJobID) + 6
+// joinLabelKey concatenates label values with labelKeySep using a
+// strings.Builder, avoiding the intermediate slice allocation of
+// strings.Join.
+func joinLabelKey(parts ...string) string {
+	n := len(parts) - 1 // separators
+	for _, p := range parts {
+		n += len(p)
+	}
 	var b strings.Builder
-	b.Grow(total)
-	b.WriteString(fs)
-	b.WriteString(labelKeySep)
-	b.WriteString(mount)
-	b.WriteString(labelKeySep)
-	b.WriteString(uid)
-	b.WriteString(labelKeySep)
-	b.WriteString(username)
-	b.WriteString(labelKeySep)
-	b.WriteString(process)
-	b.WriteString(labelKeySep)
-	b.WriteString(actorType)
-	b.WriteString(labelKeySep)
-	b.WriteString(slurmJobID)
+	b.Grow(n)
+	for i, p := range parts {
+		if i > 0 {
+			b.WriteString(labelKeySep)
+		}
+		b.WriteString(p)
+	}
 	return b.String()
 }
+

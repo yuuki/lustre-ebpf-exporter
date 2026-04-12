@@ -164,7 +164,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
@@ -174,7 +174,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 		{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"},
 	}
 	for _, event := range events {
-		processEvent(event, exporter, inflight, resolver, testSlurmResolver())
+		processEvent(event, event.Comm, exporter, inflight, resolver, testSlurmResolver())
 	}
 
 	text, err := exporter.RenderText()
@@ -228,14 +228,14 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	})
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	events := []Event{
 		{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd", DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"},
 		{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 555, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"},
 	}
 	for _, event := range events {
-		processEvent(event, exporter, inflight, resolver, slurmResolver)
+		processEvent(event, event.Comm, exporter, inflight, resolver, slurmResolver)
 	}
 
 	text, err := exporter.RenderText()
@@ -269,12 +269,12 @@ func TestDirectObserveDisabledSlurmResolverEmitsEmptyLabel(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd",
 		DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, exporter, inflight, resolver, testSlurmResolver())
+	}, "dd", exporter, inflight, resolver, testSlurmResolver())
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -297,9 +297,9 @@ func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
-	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, exporter, inflight, resolver, testSlurmResolver())
+	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, "dd", exporter, inflight, resolver, testSlurmResolver())
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -318,8 +318,7 @@ func TestInflightTrackerClampsAtZero(t *testing.T) {
 		prometheus.GaugeOpts{Name: "test_inflight", Help: "test"},
 		baseLabels,
 	)
-	resolver := testResolver()
-	tracker := NewInflightTracker(gauge, resolver, testSlurmResolver())
+	tracker := NewInflightTracker(gauge)
 
 	event := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -342,8 +341,7 @@ func TestInflightTrackerPersistsAcrossReads(t *testing.T) {
 		prometheus.GaugeOpts{Name: "test_inflight2", Help: "test"},
 		baseLabels,
 	)
-	resolver := testResolver()
-	tracker := NewInflightTracker(gauge, resolver, testSlurmResolver())
+	tracker := NewInflightTracker(gauge)
 
 	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
@@ -424,18 +422,18 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	// Feed events through the direct pipeline
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, exporter, inflight, resolver, testSlurmResolver())
+	}, "dd", exporter, inflight, resolver, testSlurmResolver())
 
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, exporter, inflight, resolver, testSlurmResolver())
+	}, "dd", exporter, inflight, resolver, testSlurmResolver())
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -675,17 +673,17 @@ func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 
 	resolver := testResolver()
 	slurmResolver := testSlurmResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, slurmResolver)
+	inflight := NewInflightTracker(exporter.Inflight)
 
 	sendEvt := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 	freeEvt := Event{Plane: PlanePtlRPC, Op: OpFreeReq, UID: 1001, PID: 123, Comm: "dd", MountPath: "/mnt/lustre", FSName: "lustrefs"}
 
 	// 3 sends, 2 frees → started=3, completed=2, inflight=1
-	processEvent(sendEvt, exporter, inflight, resolver, slurmResolver)
-	processEvent(sendEvt, exporter, inflight, resolver, slurmResolver)
-	processEvent(sendEvt, exporter, inflight, resolver, slurmResolver)
-	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
-	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(sendEvt, sendEvt.Comm, exporter, inflight, resolver, slurmResolver)
+	processEvent(sendEvt, sendEvt.Comm, exporter, inflight, resolver, slurmResolver)
+	processEvent(sendEvt, sendEvt.Comm, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, freeEvt.Comm, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, freeEvt.Comm, exporter, inflight, resolver, slurmResolver)
 
 	// Positional order matches baseLabels.
 	labels := []string{"lustrefs", "/mnt/lustre", "1001", "testuser", "dd", "user", ""}
@@ -707,8 +705,8 @@ func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	// Extra frees: inflight must clamp at zero, but completed counter must
 	// still increase monotonically. This is the key property that makes the
 	// counters useful independently of the gauge.
-	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
-	processEvent(freeEvt, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, freeEvt.Comm, exporter, inflight, resolver, slurmResolver)
+	processEvent(freeEvt, freeEvt.Comm, exporter, inflight, resolver, slurmResolver)
 
 	if got := readCounterValue(t, completed); got != 4 {
 		t.Fatalf("expected completed=4 after extra frees, got %f", got)

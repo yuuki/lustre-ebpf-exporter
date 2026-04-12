@@ -149,6 +149,63 @@ Label cardinality is intentionally constrained:
 - `pid` is not exported
 - `path` is not exported
 - request pointers are not exported
+- `process` can be collapsed via `--process-allowlist` (static) or `--process-tail-trim-percent` (dynamic)
+
+### Process Label Cardinality Control
+
+On busy Lustre clients, hundreds of distinct process names can appear, inflating metric
+cardinality. Three flags work together to keep the `process` label manageable.
+
+#### `--process-allowlist` (static filtering)
+
+A comma-separated list of process names to track individually. Every process not in the
+list is collapsed to `"other"`. When set, dynamic tail-trimming is disabled entirely.
+
+```bash
+--process-allowlist "dd,python,rsync"
+# Only dd, python, rsync appear as distinct process labels; everything else → "other"
+```
+
+Use this when you know exactly which processes matter.
+
+#### `--process-tail-trim-percent` (dynamic filtering)
+
+Dynamically identifies the bottom N% of processes by operation count in each drain cycle
+and collapses them to `"other"`. The ranking is rebuilt every drain interval (default 5 s)
+using only the ops from the previous cycle, so the trim set adapts to workload changes.
+
+```bash
+--process-tail-trim-percent 10
+# Bottom 10% of processes by op count become "other"
+```
+
+Example: if four processes ran during a drain cycle with ops `dd=1000, python=500, bash=10, cat=5`,
+a 50% trim would collapse the bottom two (`cat`, `bash`) to `"other"`, keeping `dd` and `python`
+as distinct labels. Ties are broken alphabetically.
+
+Set to 0 (the default) to disable.
+
+#### `--process-tail-trim-hysteresis` (label churn prevention)
+
+Controls how many consecutive drain cycles a process must remain in the trim candidate set
+before it is actually trimmed. This prevents borderline processes from flapping between
+their real name and `"other"` across successive scrapes.
+
+```bash
+--process-tail-trim-percent 10 --process-tail-trim-hysteresis 3
+# A process must be in the bottom 10% for 3 consecutive cycles before being trimmed
+```
+
+If a process moves out of the trim candidate set in any cycle, its consecutive counter
+resets to zero immediately. Default is 1 (trim on the first qualifying cycle).
+
+#### Priority
+
+The flags are mutually exclusive in practice:
+
+1. If `--process-allowlist` is set, it takes absolute priority and tail-trimming is skipped.
+2. If `--process-tail-trim-percent` > 0 (and no allowlist), dynamic trimming applies.
+3. If neither is set, all process names pass through unchanged.
 
 ### Metric Coverage by Implementation
 
@@ -213,6 +270,9 @@ Useful flags:
 - `--legacy-symbol-allow-missing`
 - `--slurm-jobid` (enable Slurm job id resolution per pid)
 - `--slurm-jobid-ttl`, `--slurm-jobid-negative-ttl`, `--slurm-jobid-verify-ttl`, `--slurm-jobid-cache-size`
+- `--process-allowlist` (comma-separated list of process names to track; all others become `"other"`)
+- `--process-tail-trim-percent` (dynamically trim the bottom N% of processes by operation count; default 0 = disabled)
+- `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 1)
 - `--web.listen-address`
 - `--web.telemetry-path`
 - `--version`

@@ -256,7 +256,7 @@ func intentName(raw uint8) string {
 }
 
 var (
-	IntentForOp = map[string]string{
+	intentForOp = map[string]string{
 		OpLookup: IntentNamespaceRead, OpOpen: IntentNamespaceRead,
 		OpClose: IntentNamespaceRead, OpGetattr: IntentNamespaceRead,
 		OpGetxattr: IntentNamespaceRead, OpStatfs: IntentNamespaceRead,
@@ -315,6 +315,18 @@ type Config struct {
 	// When false (default), PCC kprobes are not attached and PCC metrics
 	// are not registered.
 	PCCEnabled bool
+
+	// ProcessAllowlist is a static list of process names that pass through
+	// as-is; all others are replaced with "other". When set, it takes
+	// priority over ProcessTailTrimPercent.
+	ProcessAllowlist []string
+	// ProcessTailTrimPercent (0–100) dynamically trims the bottom N% of
+	// processes by operation count each drain interval. 0 disables trimming.
+	ProcessTailTrimPercent float64
+	// ProcessTailTrimHysteresis is the number of consecutive drain cycles
+	// a process must remain in the trim candidate set before it is actually
+	// trimmed. Prevents label churn from borderline processes. Default: 3.
+	ProcessTailTrimHysteresis int
 }
 
 type Event struct {
@@ -341,12 +353,16 @@ type MountInfo struct {
 }
 
 func sanitizeComm(raw []byte) string {
-	raw = bytes.TrimLeft(raw, "\x00")
-	end := bytes.IndexByte(raw, 0)
-	if end >= 0 {
-		raw = raw[:end]
+	// Skip leading null bytes without allocating (replaces bytes.TrimLeft).
+	start := 0
+	for start < len(raw) && raw[start] == 0 {
+		start++
 	}
-	return string(raw)
+	end := bytes.IndexByte(raw[start:], 0)
+	if end >= 0 {
+		return string(raw[start : start+end])
+	}
+	return string(raw[start:])
 }
 
 func parseObserverEvent(sample []byte) (Event, error) {

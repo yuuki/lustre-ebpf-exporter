@@ -26,6 +26,8 @@ type procNameEntry struct {
 	expiresAt time.Time
 }
 
+func (e procNameEntry) ExpireTime() time.Time { return e.expiresAt }
+
 // ProcNameResolver resolves a PID to the full process name (basename of
 // argv[0] from /proc/<pid>/cmdline) with TTL caching and pid-reuse detection
 // via /proc/<pid>/stat starttime. Falls back to the BPF comm field (max 15
@@ -101,7 +103,7 @@ func (r *ProcNameResolver) Resolve(pid uint32, commFallback string) string {
 
 	r.mu.Lock()
 	if len(r.entries) >= procNameMaxEntries {
-		evictOldestProcName(r.entries)
+		slurm.EvictOldest(r.entries)
 	}
 	r.entries[pid] = procNameEntry{
 		name:      name,
@@ -116,23 +118,6 @@ func (r *ProcNameResolver) Resolve(pid uint32, commFallback string) string {
 	return name
 }
 
-// evictOldestProcName drops the single entry closest to expiry.
-// Same strategy as slurm/cache.go:evictOldest; O(n) but only runs at saturation.
-func evictOldestProcName(m map[uint32]procNameEntry) {
-	var oldestKey uint32
-	var oldestSet bool
-	var oldestExp time.Time
-	for k, v := range m {
-		if !oldestSet || v.expiresAt.Before(oldestExp) {
-			oldestKey = k
-			oldestExp = v.expiresAt
-			oldestSet = true
-		}
-	}
-	if oldestSet {
-		delete(m, oldestKey)
-	}
-}
 
 // parseCmdlineName returns the basename of argv[0] from a /proc/<pid>/cmdline blob.
 func parseCmdlineName(raw []byte) string {
