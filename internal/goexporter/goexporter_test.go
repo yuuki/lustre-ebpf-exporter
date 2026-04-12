@@ -809,7 +809,7 @@ func TestDirectObservePCCHistogram(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 	slurmResolver := testSlurmResolver()
 
 	events := []Event{
@@ -817,7 +817,7 @@ func TestDirectObservePCCHistogram(t *testing.T) {
 		{Plane: PlanePCC, Op: OpWrite, UID: 1001, PID: 123, Comm: "cp", DurationUS: 200, SizeBytes: 8192, MountPath: "/mnt/lustre", FSName: "lustrefs"},
 	}
 	for _, event := range events {
-		processEvent(event, exporter, inflight, resolver, slurmResolver)
+		processEvent(event, event.Comm, exporter, inflight, resolver, slurmResolver)
 	}
 
 	text, err := exporter.RenderText()
@@ -838,11 +838,11 @@ func TestPCCSkipsZeroDuration(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 	slurmResolver := testSlurmResolver()
 
 	event := Event{Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp", DurationUS: 0, SizeBytes: 4096, MountPath: "/mnt/lustre", FSName: "lustrefs"}
-	processEvent(event, exporter, inflight, resolver, slurmResolver)
+	processEvent(event, event.Comm, exporter, inflight, resolver, slurmResolver)
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -888,7 +888,7 @@ func TestPCCAttachEvent(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 	slurmResolver := testSlurmResolver()
 
 	// Successful RO auto-attach.
@@ -897,7 +897,7 @@ func TestPCCAttachEvent(t *testing.T) {
 		DurationUS: 50, RequestPtr: (1 << 8) | 2, // mode=RO, trigger=auto
 		MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}
-	processEvent(attachEvent, exporter, inflight, resolver, slurmResolver)
+	processEvent(attachEvent, attachEvent.Comm, exporter, inflight, resolver, slurmResolver)
 
 	// Failed RW manual-attach.
 	failedAttach := Event{
@@ -906,7 +906,7 @@ func TestPCCAttachEvent(t *testing.T) {
 		ErrnoClass: ErrnoClassIO,
 		MountPath:  "/mnt/lustre", FSName: "lustrefs",
 	}
-	processEvent(failedAttach, exporter, inflight, resolver, slurmResolver)
+	processEvent(failedAttach, failedAttach.Comm, exporter, inflight, resolver, slurmResolver)
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -935,7 +935,7 @@ func TestPCCDetachAndInvalidateEvents(t *testing.T) {
 	defer exporter.Shutdown(context.Background())
 
 	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, resolver, testSlurmResolver())
+	inflight := NewInflightTracker(exporter.Inflight)
 	slurmResolver := testSlurmResolver()
 
 	detachEvent := Event{
@@ -946,8 +946,8 @@ func TestPCCDetachAndInvalidateEvents(t *testing.T) {
 		Plane: PlanePCC, Op: OpPCCInvalidate, UID: 1001, PID: 123, Comm: "lustre",
 		MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}
-	processEvent(detachEvent, exporter, inflight, resolver, slurmResolver)
-	processEvent(invalidateEvent, exporter, inflight, resolver, slurmResolver)
+	processEvent(detachEvent, detachEvent.Comm, exporter, inflight, resolver, slurmResolver)
+	processEvent(invalidateEvent, invalidateEvent.Comm, exporter, inflight, resolver, slurmResolver)
 
 	text, err := exporter.RenderText()
 	if err != nil {
