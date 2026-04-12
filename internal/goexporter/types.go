@@ -225,7 +225,7 @@ func intentName(raw uint8) string {
 }
 
 var (
-	IntentForOp = map[string]string{
+	intentForOp = map[string]string{
 		OpLookup: IntentNamespaceRead, OpOpen: IntentNamespaceRead,
 		OpClose: IntentNamespaceRead, OpGetattr: IntentNamespaceRead,
 		OpGetxattr: IntentNamespaceRead, OpStatfs: IntentNamespaceRead,
