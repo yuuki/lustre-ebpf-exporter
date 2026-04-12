@@ -61,7 +61,7 @@ func main() {
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
 	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\". Takes priority over --process-tail-trim-percent")
 	flag.Float64Var(&cfg.ProcessTailTrimPercent, "process-tail-trim-percent", 0, "Dynamically trim the bottom N% of processes by operation count each drain interval (0 to disable)")
-	flag.IntVar(&cfg.ProcessTailTrimHysteresis, "process-tail-trim-hysteresis", 3, "Consecutive drain cycles a process must be in the trim set before actually trimming")
+	flag.IntVar(&cfg.ProcessTailTrimHysteresis, "process-tail-trim-hysteresis", 1, "Consecutive drain cycles a process must be in the trim set before actually trimming")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 

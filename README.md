@@ -188,7 +188,7 @@ Useful flags:
 - `--slurm-jobid-ttl`, `--slurm-jobid-negative-ttl`, `--slurm-jobid-verify-ttl`, `--slurm-jobid-cache-size`
 - `--process-allowlist` (comma-separated list of process names to track; all others become `"other"`)
 - `--process-tail-trim-percent` (dynamically trim the bottom N% of processes by operation count; default 0 = disabled)
-- `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 3)
+- `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 1)
 - `--web.listen-address`
 - `--web.telemetry-path`
 - `--version`
