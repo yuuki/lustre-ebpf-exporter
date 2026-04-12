@@ -279,7 +279,7 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 			actorTypeName(key.ActorType),
 			slurmJobID,
 		}
-		accKey := strings.Join(vals[:], labelKeySep)
+		accKey := joinLabelKey(vals[:]...)
 
 		acc, ok := c.lliteAcc[accKey]
 		if !ok {
@@ -306,7 +306,7 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 			actorTypeName(key.ActorType),
 			slurmJobID,
 		}
-		accKey := strings.Join(vals[:], labelKeySep)
+		accKey := joinLabelKey(vals[:]...)
 
 		acc, ok := c.rpcAcc[accKey]
 		if !ok {
@@ -360,7 +360,7 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 			slurmJobID,
 			errnoClassName(key.Reason),
 		}
-		accKey := strings.Join(vals[:], labelKeySep)
+		accKey := joinLabelKey(vals[:]...)
 
 		acc, ok := c.lliteErrorAcc[accKey]
 		if !ok {
@@ -390,7 +390,7 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 			actorTypeName(key.ActorType),
 			slurmJobID,
 		}
-		accKey := strings.Join(vals[:], labelKeySep)
+		accKey := joinLabelKey(vals[:]...)
 
 		acc, ok := c.rpcErrorAcc[accKey]
 		if !ok {
@@ -417,6 +417,25 @@ func (c *BPFCounterCollector) normalizeProcess(comm [16]byte, opsCount uint64) s
 		c.rawProcessOps[raw] += float64(opsCount)
 	}
 	return c.processFilter.Normalize(raw)
+}
+
+// joinLabelKey concatenates label values with labelKeySep using a
+// strings.Builder, avoiding the intermediate slice allocation of
+// strings.Join. Used by all drain callbacks.
+func joinLabelKey(parts ...string) string {
+	n := len(parts) - 1 // separators
+	for _, p := range parts {
+		n += len(p)
+	}
+	var b strings.Builder
+	b.Grow(n)
+	for i, p := range parts {
+		if i > 0 {
+			b.WriteString(labelKeySep)
+		}
+		b.WriteString(p)
+	}
+	return b.String()
 }
 
 func rawOpToName(raw uint8) string {
