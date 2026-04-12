@@ -27,6 +27,9 @@ type ProcessFilter struct {
 	trimPercent float64 // 0–100; 0 means disabled.
 	hysteresis  int     // consecutive cycles before actually trimming.
 
+	// stripSuffix removes trailing separator+digits before filtering.
+	stripSuffix bool
+
 	// trimmed is stored as atomic.Value holding map[string]struct{} for
 	// lock-free reads on the hot path. Updated by UpdateTrimSet only.
 	trimmed atomic.Value // map[string]struct{}
@@ -39,7 +42,7 @@ type ProcessFilter struct {
 
 // NewProcessFilter creates a filter. Pass nil allowlist and trimPercent=0
 // to create a no-op filter (all names pass through).
-func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int) *ProcessFilter {
+func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int, stripSuffix bool) *ProcessFilter {
 	var al map[string]struct{}
 	if len(allowlist) > 0 {
 		al = make(map[string]struct{}, len(allowlist))
@@ -54,6 +57,7 @@ func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int) *
 		allowlist:          al,
 		trimPercent:        trimPercent,
 		hysteresis:         hysteresis,
+		stripSuffix:        stripSuffix,
 		trimCandidateCount: map[string]int{},
 	}
 	f.trimmed.Store(map[string]struct{}{})
@@ -68,6 +72,13 @@ func NewProcessFilter(allowlist []string, trimPercent float64, hysteresis int) *
 // the full resolved name may not match. Passing bpfComm allows the
 // filter to check both names against the trim set.
 func (f *ProcessFilter) Normalize(process string, bpfComm ...string) string {
+	if f.stripSuffix {
+		process = stripTrailingNumericSuffix(process)
+		if len(bpfComm) > 0 {
+			bpfComm[0] = stripTrailingNumericSuffix(bpfComm[0])
+		}
+	}
+
 	if f.allowlist != nil {
 		if _, ok := f.allowlist[process]; ok {
 			return process
@@ -156,5 +167,31 @@ func (f *ProcessFilter) TrimmedCount() int {
 
 // IsActive returns true if the filter is doing any filtering.
 func (f *ProcessFilter) IsActive() bool {
-	return f.allowlist != nil || f.trimPercent > 0
+	return f.allowlist != nil || f.trimPercent > 0 || f.stripSuffix
+}
+
+// stripTrailingNumericSuffix removes a trailing separator+digits suffix from
+// a process name to collapse numbered variants (e.g. "Bun Pool 1" → "Bun Pool").
+// Recognised separators: space, dash, underscore, colon.
+// Names where digits follow a period (e.g. "python3.11") are left unchanged.
+func stripTrailingNumericSuffix(s string) string {
+	i := len(s) - 1
+	for i >= 0 && s[i] >= '0' && s[i] <= '9' {
+		i--
+	}
+	if i == len(s)-1 {
+		return s // no trailing digits
+	}
+	if i < 0 {
+		return s // entire string is digits
+	}
+	switch s[i] {
+	case ' ', '-', '_', ':':
+		if i == 0 {
+			return s // would reduce to empty
+		}
+		return s[:i]
+	default:
+		return s // separator not recognised (e.g. period)
+	}
 }

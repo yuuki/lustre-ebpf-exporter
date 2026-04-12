@@ -44,7 +44,7 @@ func Run(ctx context.Context, cfg Config) error {
 	resolver := NewUsernameResolver()
 	slurmResolver := newSlurmResolverFromConfig(cfg)
 	procNameResolver := NewProcNameResolver()
-	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis)
+	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis, cfg.ProcessNameStripSuffix)
 
 	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
