@@ -30,6 +30,7 @@ type BPFCounterCollector struct {
 	// emits slurm_job_id="" on counters. A Phase 2 design could push the
 	// pid->jobid mapping into a BPF LRU map and include job_id in agg_key.
 	slurmResolver *slurm.Resolver
+	slurmEnabled  bool
 
 	// Accumulator maps grow monotonically: one entry per unique label
 	// combination observed. BPF-side maps are bounded (max_entries), but
@@ -69,36 +70,32 @@ type BPFCounterCollector struct {
 	pccErrorsDesc    *prometheus.Desc
 }
 
-// lliteAccum stores label values in lliteLabels order:
-// fs, mount, access_intent, op, uid, username, process, actor_type, slurm_job_id.
+// lliteAccum stores label values in lliteLabels or lliteLabelsNoSlurm order.
 type lliteAccum struct {
 	opsCount float64
 	bytesSum float64
-	values   [9]string
+	values   []string
 }
 
-// rpcAccum stores label values in ptlrpcLabels order:
-// fs, mount, op, uid, username, process, actor_type, slurm_job_id.
+// rpcAccum stores label values in ptlrpcLabels or ptlrpcLabelsNoSlurm order.
 type rpcAccum struct {
 	opsCount float64
-	values   [8]string
+	values   []string
 }
 
-// lliteErrorAccum stores label values in lliteErrLabels order:
-// fs, mount, access_intent, op, uid, username, process, actor_type, slurm_job_id, errno_class.
+// lliteErrorAccum stores label values in lliteErrLabels or lliteErrLabelsNoSlurm order.
 type lliteErrorAccum struct {
 	opsCount float64
-	values   [10]string
+	values   []string
 }
 
-// rpcErrorAccum stores label values in rpcErrorLabels order:
-// fs, mount, event, uid, username, process, actor_type, slurm_job_id.
+// rpcErrorAccum stores label values in rpcErrorLabels or rpcErrorLabelsNoSlurm order.
 type rpcErrorAccum struct {
 	opsCount float64
-	values   [8]string
+	values   []string
 }
 
-func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter) *BPFCounterCollector {
+func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter, slurmEnabled bool) *BPFCounterCollector {
 	c := &BPFCounterCollector{
 		lliteMap:      lliteMap,
 		rpcMap:        rpcMap,
@@ -109,6 +106,7 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 		mountInfos:    mountInfos,
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
+		slurmEnabled:  slurmEnabled,
 		processFilter: processFilter,
 		rawProcessOps: map[string]float64{},
 		lliteAcc:      map[string]*lliteAccum{},
@@ -120,44 +118,44 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 		accessOpsDesc: prometheus.NewDesc(
 			"lustre_client_access_operations_total",
 			"Aggregated llite access operation count",
-			lliteLabels, nil,
+			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
 		),
 		dataBytesDesc: prometheus.NewDesc(
 			"lustre_client_data_bytes_total",
 			"Aggregated llite data volume in bytes",
-			lliteLabels, nil,
+			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
 		),
 		rpcWaitOpsDesc: prometheus.NewDesc(
 			"lustre_client_rpc_wait_operations_total",
 			"Aggregated ptlrpc queue wait count",
-			ptlrpcLabels, nil,
+			pickLabels(slurmEnabled,ptlrpcLabels, ptlrpcLabelsNoSlurm), nil,
 		),
 		accessErrorsDesc: prometheus.NewDesc(
 			"lustre_client_operation_errors_total",
 			"Aggregated llite operation error count by errno class",
-			lliteErrLabels, nil,
+			pickLabels(slurmEnabled,lliteErrLabels, lliteErrLabelsNoSlurm), nil,
 		),
 		rpcErrorsDesc: prometheus.NewDesc(
 			"lustre_client_rpc_errors_total",
 			"Aggregated ptlrpc error/recovery event count",
-			rpcErrorLabels, nil,
+			pickLabels(slurmEnabled,rpcErrorLabels, rpcErrorLabelsNoSlurm), nil,
 		),
 	}
 	if pccMap != nil {
 		c.pccOpsDesc = prometheus.NewDesc(
 			"lustre_client_pcc_operations_total",
 			"Aggregated PCC I/O operation count",
-			lliteLabels, nil,
+			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
 		)
 		c.pccBytesDesc = prometheus.NewDesc(
 			"lustre_client_pcc_data_bytes_total",
 			"Aggregated PCC data volume in bytes",
-			lliteLabels, nil,
+			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
 		)
 		c.pccErrorsDesc = prometheus.NewDesc(
 			"lustre_client_pcc_operation_errors_total",
 			"Aggregated PCC operation error count by errno class",
-			lliteErrLabels, nil,
+			pickLabels(slurmEnabled,lliteErrLabels, lliteErrLabelsNoSlurm), nil,
 		)
 	}
 	return c
@@ -186,13 +184,13 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.accessOpsDesc, prometheus.CounterValue, acc.opsCount,
-				acc.values[:]...,
+				acc.values...,
 			)
 		}
 		if acc.bytesSum > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.dataBytesDesc, prometheus.CounterValue, acc.bytesSum,
-				acc.values[:]...,
+				acc.values...,
 			)
 		}
 	}
@@ -200,7 +198,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.rpcWaitOpsDesc, prometheus.CounterValue, acc.opsCount,
-				acc.values[:]...,
+				acc.values...,
 			)
 		}
 	}
@@ -208,7 +206,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.accessErrorsDesc, prometheus.CounterValue, acc.opsCount,
-				acc.values[:]...,
+				acc.values...,
 			)
 		}
 	}
@@ -216,7 +214,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.rpcErrorsDesc, prometheus.CounterValue, acc.opsCount,
-				acc.values[:]...,
+				acc.values...,
 			)
 		}
 	}
@@ -225,13 +223,13 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 			if acc.opsCount > 0 {
 				ch <- prometheus.MustNewConstMetric(
 					c.pccOpsDesc, prometheus.CounterValue, acc.opsCount,
-					acc.values[:]...,
+					acc.values...,
 				)
 			}
 			if acc.bytesSum > 0 {
 				ch <- prometheus.MustNewConstMetric(
 					c.pccBytesDesc, prometheus.CounterValue, acc.bytesSum,
-					acc.values[:]...,
+					acc.values...,
 				)
 			}
 		}
@@ -239,7 +237,7 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 			if acc.opsCount > 0 {
 				ch <- prometheus.MustNewConstMetric(
 					c.pccErrorsDesc, prometheus.CounterValue, acc.opsCount,
-					acc.values[:]...,
+					acc.values...,
 				)
 			}
 		}
@@ -337,30 +335,26 @@ func drainCounterMap(m *ebpf.Map, onEntry func(key bpfAggKey, total bpfCounterVa
 	}
 }
 
-// drainLLiteStyle drains a BPF counter map with the lliteLabels schema
-// (9 labels: fs, mount, intent, op, uid, username, process, actor_type, slurm_job_id)
+// drainLLiteStyle drains a BPF counter map with the lliteLabels or lliteLabelsNoSlurm schema
 // into the provided accumulator map. Used by both llite and PCC planes.
 func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*lliteAccum) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
-		const slurmJobID = ""
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
-		vals := [9]string{
-			fsName,
-			mountPath,
-			intentName(key.Intent),
-			rawOpToName(key.Op),
-			strconv.FormatUint(uint64(key.UID), 10),
-			c.resolver.Resolve(key.UID),
-			process,
-			actorTypeName(key.ActorType),
-			slurmJobID,
-		}
-		accKey := joinLabelKey(vals[:]...)
+		intent := intentName(key.Intent)
+		op := rawOpToName(key.Op)
+		uid := strconv.FormatUint(uint64(key.UID), 10)
+		username := c.resolver.Resolve(key.UID)
+		actor := actorTypeName(key.ActorType)
+		// slurm_job_id is always empty for counters; key excludes it since it is constant.
+		accKey := joinLabelKey(fsName, mountPath, intent, op, uid, username, process, actor)
 
 		a, ok := acc[accKey]
 		if !ok {
+			vals := []string{fsName, mountPath, intent, op, uid, username, process, actor}
+			if c.slurmEnabled {
+				vals = append(vals, "")
+			}
 			a = &lliteAccum{values: vals}
 			acc[accKey] = a
 		}
@@ -376,22 +370,19 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		const slurmJobID = ""
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
-		vals := [8]string{
-			fsName,
-			mountPath,
-			rawOpToName(key.Op),
-			strconv.FormatUint(uint64(key.UID), 10),
-			c.resolver.Resolve(key.UID),
-			process,
-			actorTypeName(key.ActorType),
-			slurmJobID,
-		}
-		accKey := joinLabelKey(vals[:]...)
+		op := rawOpToName(key.Op)
+		uid := strconv.FormatUint(uint64(key.UID), 10)
+		username := c.resolver.Resolve(key.UID)
+		actor := actorTypeName(key.ActorType)
+		accKey := joinLabelKey(fsName, mountPath, op, uid, username, process, actor)
 
 		acc, ok := c.rpcAcc[accKey]
 		if !ok {
+			vals := []string{fsName, mountPath, op, uid, username, process, actor}
+			if c.slurmEnabled {
+				vals = append(vals, "")
+			}
 			acc = &rpcAccum{values: vals}
 			c.rpcAcc[accKey] = acc
 		}
@@ -425,29 +416,33 @@ func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bp
 	}
 }
 
-// drainLLiteStyleErrors drains a BPF error counter map with the lliteErrLabels
-// schema (10 labels) into the provided accumulator map. Used by both llite and PCC.
+// drainLLiteStyleErrors drains a BPF error counter map with the lliteErrLabels or
+// lliteErrLabelsNoSlurm schema into the provided accumulator map. Used by both llite and PCC.
+// Note: when slurmEnabled=true, slurm_job_id comes before errno_class.
+// drainLLiteStyleErrors drains a BPF error counter map with the lliteErrLabels or
+// lliteErrLabelsNoSlurm schema into the provided accumulator map. Used by both llite and PCC.
+// When slurmEnabled, slurm_job_id (always "") is inserted before errno_class.
 func (c *BPFCounterCollector) drainLLiteStyleErrors(m *ebpf.Map, acc map[string]*lliteErrorAccum) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		const slurmJobID = ""
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
-		vals := [10]string{
-			fsName,
-			mountPath,
-			intentName(key.Intent),
-			rawOpToName(key.Op),
-			strconv.FormatUint(uint64(key.UID), 10),
-			c.resolver.Resolve(key.UID),
-			process,
-			actorTypeName(key.ActorType),
-			slurmJobID,
-			errnoClassName(key.Reason),
-		}
-		accKey := joinLabelKey(vals[:]...)
+		intent := intentName(key.Intent)
+		op := rawOpToName(key.Op)
+		uid := strconv.FormatUint(uint64(key.UID), 10)
+		username := c.resolver.Resolve(key.UID)
+		actor := actorTypeName(key.ActorType)
+		errno := errnoClassName(key.Reason)
+		// slurm_job_id is always empty for counters; key excludes it since it is constant.
+		accKey := joinLabelKey(fsName, mountPath, intent, op, uid, username, process, actor, errno)
 
 		a, ok := acc[accKey]
 		if !ok {
+			vals := []string{fsName, mountPath, intent, op, uid, username, process, actor}
+			if c.slurmEnabled {
+				vals = append(vals, "", errno)
+			} else {
+				vals = append(vals, errno)
+			}
 			a = &lliteErrorAccum{values: vals}
 			acc[accKey] = a
 		}
@@ -462,26 +457,22 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		const slurmJobID = ""
 		eventName := rpcEventTypeName(key.Reason)
 		if eventName == "" {
 			eventName = unknownRPCEvent
 		}
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
-		vals := [8]string{
-			fsName,
-			mountPath,
-			eventName,
-			strconv.FormatUint(uint64(key.UID), 10),
-			c.resolver.Resolve(key.UID),
-			process,
-			actorTypeName(key.ActorType),
-			slurmJobID,
-		}
-		accKey := joinLabelKey(vals[:]...)
+		uid := strconv.FormatUint(uint64(key.UID), 10)
+		username := c.resolver.Resolve(key.UID)
+		actor := actorTypeName(key.ActorType)
+		accKey := joinLabelKey(fsName, mountPath, eventName, uid, username, process, actor)
 
 		acc, ok := c.rpcErrorAcc[accKey]
 		if !ok {
+			vals := []string{fsName, mountPath, eventName, uid, username, process, actor}
+			if c.slurmEnabled {
+				vals = append(vals, "")
+			}
 			acc = &rpcErrorAccum{values: vals}
 			c.rpcErrorAcc[accKey] = acc
 		}

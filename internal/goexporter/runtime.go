@@ -52,16 +52,16 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PCCEnabled {
 		pccMap, pccErrorMap = source.PccCounterMaps()
 	}
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
-	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled)
+	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled, cfg.SlurmJobIDEnabled)
 	if err != nil {
 		return err
 	}
 	defer exporter.Shutdown(context.Background())
 
-	inflightTracker := NewInflightTracker(exporter.Inflight)
+	inflightTracker := NewInflightTracker(exporter.Inflight, cfg.SlurmJobIDEnabled)
 
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
@@ -117,10 +117,8 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 			return
 		}
 		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
-		// Positional order must match lliteLabels in prometheus.go.
 		exporter.AccessLatency.WithLabelValues(
-			event.FSName, event.MountPath, intent, event.Op,
-			uid, username, event.Comm, actorType, slurmJobID,
+			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)...,
 		).Observe(float64(event.DurationUS) / 1_000_000.0)
 		return
 	}
@@ -140,10 +138,8 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 	if event.Op == OpQueueWait {
 		if event.DurationUS > 0 {
 			uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
-			// Positional order must match ptlrpcLabels in prometheus.go.
 			exporter.RPCWaitLat.WithLabelValues(
-				event.FSName, event.MountPath, event.Op,
-				uid, username, event.Comm, actorType, slurmJobID,
+				ptlrpcLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)...,
 			).Observe(float64(event.DurationUS) / 1_000_000.0)
 		}
 		return
@@ -160,7 +156,7 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 		return
 	}
 	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
-	labels := baseLabelValues(event, uid, username, actorType, slurmJobID)
+	labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled)
 	counter.WithLabelValues(labels...).Inc()
 	inflight.Update(delta, event, uid, username, actorType, slurmJobID)
 }
@@ -176,30 +172,23 @@ func processPCCEvent(event Event, rawComm string, exporter *PrometheusExporter, 
 			return
 		}
 		exporter.PCCLatency.WithLabelValues(
-			event.FSName, event.MountPath, intent, event.Op,
-			uid, username, event.Comm, actorType, slurmJobID,
+			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)...,
 		).Observe(float64(event.DurationUS) / 1_000_000.0)
 
 	case OpPCCAttach:
-		// Phase 2: attach counter.
 		mode, trigger := DecodePCCAttachInfo(event.RequestPtr)
-		exporter.PCCAttachTotal.WithLabelValues(
-			event.FSName, event.MountPath, mode, trigger,
-			uid, username, event.Comm, actorType, slurmJobID,
-		).Inc()
+		attachVals := pccAttachLabelValues(event.FSName, event.MountPath, mode, trigger, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)
+		exporter.PCCAttachTotal.WithLabelValues(attachVals...).Inc()
 		if event.ErrnoClass != "" {
-			exporter.PCCAttachFailuresTotal.WithLabelValues(
-				event.FSName, event.MountPath, mode, trigger,
-				uid, username, event.Comm, actorType, slurmJobID,
-			).Inc()
+			exporter.PCCAttachFailuresTotal.WithLabelValues(attachVals...).Inc()
 		}
 
 	case OpPCCDetach:
-		labels := baseLabelValues(event, uid, username, actorType, slurmJobID)
+		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled)
 		exporter.PCCDetachTotal.WithLabelValues(labels...).Inc()
 
 	case OpPCCInvalidate:
-		labels := baseLabelValues(event, uid, username, actorType, slurmJobID)
+		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled)
 		exporter.PCCInvalidationsTotal.WithLabelValues(labels...).Inc()
 	}
 }
