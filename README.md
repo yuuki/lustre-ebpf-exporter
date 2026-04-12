@@ -154,7 +154,7 @@ Label cardinality is intentionally constrained:
 ### Process Label Cardinality Control
 
 On busy Lustre clients, hundreds of distinct process names can appear, inflating metric
-cardinality. Three flags work together to keep the `process` label manageable.
+cardinality. Four flags work together to keep the `process` label manageable.
 
 #### `--process-allowlist` (static filtering)
 
