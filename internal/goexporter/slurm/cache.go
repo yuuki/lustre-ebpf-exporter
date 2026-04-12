@@ -13,21 +13,31 @@ type cacheEntry struct {
 	verifiedAt time.Time
 }
 
-// evictOldest drops a single oldest-by-expiry entry. Called when the map
-// exceeds MaxEntries to keep memory bounded. O(n) but only runs when the
-// map is saturated; the fast path (normal cache hit) is untouched.
-func evictOldest(m map[uint32]cacheEntry) {
-	var oldestKey uint32
+// Expirable is implemented by cache entry types that carry an expiration time.
+type Expirable interface {
+	ExpireTime() time.Time
+}
+
+func (e cacheEntry) ExpireTime() time.Time { return e.expiresAt }
+
+// EvictOldest drops the single entry closest to expiry from a map.
+// O(n) but only runs at saturation; the fast path is untouched.
+func EvictOldest[K comparable, V Expirable](m map[K]V) {
+	var oldestKey K
 	var oldestSet bool
 	var oldestExp time.Time
 	for k, v := range m {
-		if !oldestSet || v.expiresAt.Before(oldestExp) {
+		if !oldestSet || v.ExpireTime().Before(oldestExp) {
 			oldestKey = k
-			oldestExp = v.expiresAt
+			oldestExp = v.ExpireTime()
 			oldestSet = true
 		}
 	}
 	if oldestSet {
 		delete(m, oldestKey)
 	}
+}
+
+func evictOldest(m map[uint32]cacheEntry) {
+	EvictOldest(m)
 }
