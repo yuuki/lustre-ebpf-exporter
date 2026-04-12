@@ -48,9 +48,10 @@ type BPFCounterCollector struct {
 
 	processFilter *ProcessFilter
 
-	// rawProcessOps tracks cumulative ops per raw (pre-normalization)
-	// process name. Used exclusively by opsPerProcess() so the tail-trim
-	// ranking is based on the original names, not normalized ones.
+	// rawProcessOps tracks ops per raw (pre-normalization) process name
+	// observed in the current drain cycle. Reset each drain so the
+	// tail-trim ranking reflects recent activity, not lifetime totals,
+	// and to prevent unbounded growth from short-lived process names.
 	rawProcessOps map[string]float64
 
 	accessOpsDesc   *prometheus.Desc
@@ -204,10 +205,14 @@ func (c *BPFCounterCollector) StartDrain(ctx context.Context, interval time.Dura
 }
 
 // DrainOnce reads both BPF counter maps, accumulates values, and updates
-// the dynamic tail-trim set based on the accumulated per-process ops.
+// the dynamic tail-trim set based on per-process ops observed this cycle.
 func (c *BPFCounterCollector) DrainOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Reset per-cycle ops so the trim ranking reflects only the latest
+	// drain window, preventing unbounded growth from short-lived processes.
+	c.rawProcessOps = make(map[string]float64, len(c.rawProcessOps))
 
 	if c.lliteMap != nil {
 		c.drainLLite(c.lliteMap)
@@ -227,8 +232,8 @@ func (c *BPFCounterCollector) DrainOnce() {
 	}
 }
 
-// opsPerProcess returns cumulative ops per raw (pre-normalization) process
-// name, suitable for stable tail-trim ranking.
+// opsPerProcess returns ops per raw (pre-normalization) process name
+// observed in the current drain cycle, suitable for tail-trim ranking.
 func (c *BPFCounterCollector) opsPerProcess() map[string]float64 {
 	return c.rawProcessOps
 }
