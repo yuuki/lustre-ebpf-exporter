@@ -250,6 +250,9 @@ func TestStripTrailingNumericSuffix(t *testing.T) {
 		{"worker(1)", "worker"},
 		{"worker(23)", "worker"},
 		{"pool(0)", "pool"},
+		{"worker (1)", "worker"},   // separator before paren is also stripped
+		{"task-(2)", "task"},       // dash separator before paren
+		{"job_(3)", "job"},         // underscore separator before paren
 
 		// Edge cases.
 		{"dd", "dd"},

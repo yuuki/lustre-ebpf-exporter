@@ -195,10 +195,17 @@ func stripTrailingNumericSuffix(s string) string {
 		}
 		hasDigits := j < len(s)-2
 		if j >= 0 && hasDigits && s[j] == '(' {
-			if j == 0 {
+			cut := j
+			if j > 0 {
+				switch s[j-1] {
+				case ' ', '-', '_', ':':
+					cut = j - 1
+				}
+			}
+			if cut == 0 {
 				return s // would reduce to empty
 			}
-			return s[:j]
+			return s[:cut]
 		}
 	}
 
