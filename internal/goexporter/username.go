@@ -11,7 +11,7 @@ import (
 // results are cached; transient NSS errors are retried on subsequent calls.
 // Thread-safe: accessed from both the perf-event loop and drain goroutine.
 type UsernameResolver struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	cache map[uint32]string
 }
 
@@ -22,12 +22,12 @@ func NewUsernameResolver() *UsernameResolver {
 // Resolve returns the username for the given UID.
 // Returns "unknown" if the UID does not exist in the user database.
 func (r *UsernameResolver) Resolve(uid uint32) string {
-	r.mu.Lock()
+	r.mu.RLock()
 	if cached, ok := r.cache[uid]; ok {
-		r.mu.Unlock()
+		r.mu.RUnlock()
 		return cached
 	}
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
 	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
 	if err != nil {
