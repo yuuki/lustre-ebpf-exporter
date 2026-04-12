@@ -59,6 +59,7 @@ func main() {
 	flag.IntVar(&slurmNegativeTTLSeconds, "slurm-jobid-negative-ttl", 5, "Cache TTL in seconds for a negative (unresolved) Slurm job id lookup")
 	flag.IntVar(&slurmVerifyTTLSeconds, "slurm-jobid-verify-ttl", 1, "Grace period in seconds before re-checking /proc/<pid>/stat for pid reuse")
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
+	flag.BoolVar(&cfg.PCCEnabled, "collector.pcc", false, "Enable PCC (Persistent Client Cache) metrics collection")
 	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\". Takes priority over --process-tail-trim-percent")
 	flag.Float64Var(&cfg.ProcessTailTrimPercent, "process-tail-trim-percent", 0, "Dynamically trim the bottom N% of processes by operation count each drain interval (0 to disable)")
 	flag.IntVar(&cfg.ProcessTailTrimHysteresis, "process-tail-trim-hysteresis", 1, "Consecutive drain cycles a process must be in the trim set before actually trimming")
@@ -132,6 +133,11 @@ func main() {
 			cfg.SlurmJobIDTTL, cfg.SlurmJobIDNegativeTTL, cfg.SlurmJobIDVerifyTTL, cfg.SlurmJobIDCacheSize)
 	} else {
 		log.Printf("Slurm job id resolution: disabled (label emitted as empty string)")
+	}
+	if cfg.PCCEnabled {
+		log.Printf("PCC metrics: enabled")
+	} else {
+		log.Printf("PCC metrics: disabled")
 	}
 	if len(cfg.ProcessAllowlist) > 0 {
 		log.Printf("Process allowlist: %s (all others become \"other\")", strings.Join(cfg.ProcessAllowlist, ", "))

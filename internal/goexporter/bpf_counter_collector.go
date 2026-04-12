@@ -45,6 +45,12 @@ type BPFCounterCollector struct {
 	lliteErrorAcc map[string]*lliteErrorAccum
 	rpcErrorAcc   map[string]*rpcErrorAccum
 
+	// PCC counter maps and accumulators.
+	pccMap      *ebpf.Map
+	pccErrorMap *ebpf.Map
+	pccAcc      map[string]*lliteAccum      // reuses lliteAccum shape (9 labels)
+	pccErrorAcc map[string]*lliteErrorAccum  // reuses lliteErrorAccum shape (10 labels)
+
 	processFilter *ProcessFilter
 
 	// rawProcessOps tracks ops per raw (pre-normalization) process name
@@ -53,11 +59,14 @@ type BPFCounterCollector struct {
 	// and to prevent unbounded growth from short-lived process names.
 	rawProcessOps map[string]float64
 
-	accessOpsDesc   *prometheus.Desc
-	dataBytesDesc   *prometheus.Desc
-	rpcWaitOpsDesc  *prometheus.Desc
+	accessOpsDesc    *prometheus.Desc
+	dataBytesDesc    *prometheus.Desc
+	rpcWaitOpsDesc   *prometheus.Desc
 	accessErrorsDesc *prometheus.Desc
 	rpcErrorsDesc    *prometheus.Desc
+	pccOpsDesc       *prometheus.Desc
+	pccBytesDesc     *prometheus.Desc
+	pccErrorsDesc    *prometheus.Desc
 }
 
 // lliteAccum stores label values in lliteLabels order:
@@ -89,12 +98,14 @@ type rpcErrorAccum struct {
 	values   [8]string
 }
 
-func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter) *BPFCounterCollector {
-	return &BPFCounterCollector{
+func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter) *BPFCounterCollector {
+	c := &BPFCounterCollector{
 		lliteMap:      lliteMap,
 		rpcMap:        rpcMap,
 		lliteErrorMap: lliteErrorMap,
 		rpcErrorMap:   rpcErrorMap,
+		pccMap:        pccMap,
+		pccErrorMap:   pccErrorMap,
 		mountInfos:    mountInfos,
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
@@ -104,6 +115,8 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.M
 		rpcAcc:        map[string]*rpcAccum{},
 		lliteErrorAcc: map[string]*lliteErrorAccum{},
 		rpcErrorAcc:   map[string]*rpcErrorAccum{},
+		pccAcc:        map[string]*lliteAccum{},
+		pccErrorAcc:   map[string]*lliteErrorAccum{},
 		accessOpsDesc: prometheus.NewDesc(
 			"lustre_client_access_operations_total",
 			"Aggregated llite access operation count",
@@ -130,6 +143,24 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.M
 			rpcErrorLabels, nil,
 		),
 	}
+	if pccMap != nil {
+		c.pccOpsDesc = prometheus.NewDesc(
+			"lustre_client_pcc_operations_total",
+			"Aggregated PCC I/O operation count",
+			lliteLabels, nil,
+		)
+		c.pccBytesDesc = prometheus.NewDesc(
+			"lustre_client_pcc_data_bytes_total",
+			"Aggregated PCC data volume in bytes",
+			lliteLabels, nil,
+		)
+		c.pccErrorsDesc = prometheus.NewDesc(
+			"lustre_client_pcc_operation_errors_total",
+			"Aggregated PCC operation error count by errno class",
+			lliteErrLabels, nil,
+		)
+	}
+	return c
 }
 
 // Describe implements prometheus.Collector.
@@ -139,6 +170,11 @@ func (c *BPFCounterCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.rpcWaitOpsDesc
 	ch <- c.accessErrorsDesc
 	ch <- c.rpcErrorsDesc
+	if c.pccOpsDesc != nil {
+		ch <- c.pccOpsDesc
+		ch <- c.pccBytesDesc
+		ch <- c.pccErrorsDesc
+	}
 }
 
 // Collect implements prometheus.Collector. Called at scrape time.
@@ -182,6 +218,30 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 				c.rpcErrorsDesc, prometheus.CounterValue, acc.opsCount,
 				acc.values[:]...,
 			)
+		}
+	}
+	if c.pccOpsDesc != nil {
+		for _, acc := range c.pccAcc {
+			if acc.opsCount > 0 {
+				ch <- prometheus.MustNewConstMetric(
+					c.pccOpsDesc, prometheus.CounterValue, acc.opsCount,
+					acc.values[:]...,
+				)
+			}
+			if acc.bytesSum > 0 {
+				ch <- prometheus.MustNewConstMetric(
+					c.pccBytesDesc, prometheus.CounterValue, acc.bytesSum,
+					acc.values[:]...,
+				)
+			}
+		}
+		for _, acc := range c.pccErrorAcc {
+			if acc.opsCount > 0 {
+				ch <- prometheus.MustNewConstMetric(
+					c.pccErrorsDesc, prometheus.CounterValue, acc.opsCount,
+					acc.values[:]...,
+				)
+			}
 		}
 	}
 }
@@ -234,6 +294,12 @@ func (c *BPFCounterCollector) DrainOnce() {
 	if c.rpcErrorMap != nil {
 		c.drainRPCErrors(c.rpcErrorMap)
 	}
+	if c.pccMap != nil {
+		c.drainPCC(c.pccMap)
+	}
+	if c.pccErrorMap != nil {
+		c.drainPCCErrors(c.pccErrorMap)
+	}
 }
 
 // opsPerProcess returns ops per raw (pre-normalization) process name
@@ -271,7 +337,10 @@ func drainCounterMap(m *ebpf.Map, onEntry func(key bpfAggKey, total bpfCounterVa
 	}
 }
 
-func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
+// drainLLiteStyle drains a BPF counter map with the lliteLabels schema
+// (9 labels: fs, mount, intent, op, uid, username, process, actor_type, slurm_job_id)
+// into the provided accumulator map. Used by both llite and PCC planes.
+func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*lliteAccum) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		// slurm_job_id is always empty for counters; see BPFCounterCollector doc.
@@ -290,14 +359,18 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 		}
 		accKey := joinLabelKey(vals[:]...)
 
-		acc, ok := c.lliteAcc[accKey]
+		a, ok := acc[accKey]
 		if !ok {
-			acc = &lliteAccum{values: vals}
-			c.lliteAcc[accKey] = acc
+			a = &lliteAccum{values: vals}
+			acc[accKey] = a
 		}
-		acc.opsCount += float64(total.OpsCount)
-		acc.bytesSum += float64(total.BytesSum)
+		a.opsCount += float64(total.OpsCount)
+		a.bytesSum += float64(total.BytesSum)
 	})
+}
+
+func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
+	c.drainLLiteStyle(m, c.lliteAcc)
 }
 
 func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
@@ -352,7 +425,9 @@ func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bp
 	}
 }
 
-func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
+// drainLLiteStyleErrors drains a BPF error counter map with the lliteErrLabels
+// schema (10 labels) into the provided accumulator map. Used by both llite and PCC.
+func (c *BPFCounterCollector) drainLLiteStyleErrors(m *ebpf.Map, acc map[string]*lliteErrorAccum) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		const slurmJobID = ""
@@ -371,13 +446,17 @@ func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
 		}
 		accKey := joinLabelKey(vals[:]...)
 
-		acc, ok := c.lliteErrorAcc[accKey]
+		a, ok := acc[accKey]
 		if !ok {
-			acc = &lliteErrorAccum{values: vals}
-			c.lliteErrorAcc[accKey] = acc
+			a = &lliteErrorAccum{values: vals}
+			acc[accKey] = a
 		}
-		acc.opsCount += float64(total.OpsCount)
+		a.opsCount += float64(total.OpsCount)
 	})
+}
+
+func (c *BPFCounterCollector) drainLLiteErrors(m *ebpf.Map) {
+	c.drainLLiteStyleErrors(m, c.lliteErrorAcc)
 }
 
 func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
@@ -408,6 +487,14 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		}
 		acc.opsCount += float64(total.OpsCount)
 	})
+}
+
+func (c *BPFCounterCollector) drainPCC(m *ebpf.Map) {
+	c.drainLLiteStyle(m, c.pccAcc)
+}
+
+func (c *BPFCounterCollector) drainPCCErrors(m *ebpf.Map) {
+	c.drainLLiteStyleErrors(m, c.pccErrorAcc)
 }
 
 func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {

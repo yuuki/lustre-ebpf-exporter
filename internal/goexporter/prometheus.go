@@ -20,6 +20,7 @@ var (
 	lliteLabels     = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
 	lliteErrLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"}
 	rpcErrorLabels  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type", "slurm_job_id"}
+	pccAttachLabels = []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type", "slurm_job_id"}
 )
 
 // PrometheusExporter serves Prometheus metrics via HTTP.
@@ -30,17 +31,27 @@ type PrometheusExporter struct {
 	server   *http.Server
 	listener net.Listener
 
+	PCCEnabled bool
+
 	AccessLatency     *prometheus.HistogramVec
 	RPCWaitLat        *prometheus.HistogramVec
 	Inflight          *prometheus.GaugeVec
 	RequestsStarted   *prometheus.CounterVec
 	RequestsCompleted *prometheus.CounterVec
+
+	// PCC metrics (nil when PCCEnabled is false)
+	PCCLatency             *prometheus.HistogramVec
+	PCCAttachTotal         *prometheus.CounterVec
+	PCCAttachFailuresTotal *prometheus.CounterVec
+	PCCDetachTotal         *prometheus.CounterVec
+	PCCInvalidationsTotal  *prometheus.CounterVec
 }
 
-func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector) (*PrometheusExporter, error) {
+func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool) (*PrometheusExporter, error) {
 	registry := prometheus.NewRegistry()
 	exporter := &PrometheusExporter{
-		registry: registry,
+		registry:   registry,
+		PCCEnabled: pccEnabled,
 		AccessLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
 			lliteLabels,
@@ -72,6 +83,50 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 	collectors := []prometheus.Collector{
 		exporter.AccessLatency, exporter.RPCWaitLat, exporter.Inflight,
 		exporter.RequestsStarted, exporter.RequestsCompleted,
+	}
+
+	if pccEnabled {
+		exporter.PCCLatency = prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "lustre_client_pcc_operation_duration_seconds",
+				Help:    "PCC I/O operation latency in seconds",
+				Buckets: PrometheusLatencyBucketsSeconds,
+			},
+			lliteLabels,
+		)
+		exporter.PCCAttachTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lustre_client_pcc_attach_total",
+				Help: "Total PCC attach attempts",
+			},
+			pccAttachLabels,
+		)
+		exporter.PCCAttachFailuresTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lustre_client_pcc_attach_failures_total",
+				Help: "Total PCC attach failures",
+			},
+			pccAttachLabels,
+		)
+		exporter.PCCDetachTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lustre_client_pcc_detach_total",
+				Help: "Total PCC detach operations",
+			},
+			baseLabels,
+		)
+		exporter.PCCInvalidationsTotal = prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "lustre_client_pcc_layout_invalidations_total",
+				Help: "Total PCC layout invalidation events",
+			},
+			baseLabels,
+		)
+		collectors = append(collectors,
+			exporter.PCCLatency,
+			exporter.PCCAttachTotal, exporter.PCCAttachFailuresTotal,
+			exporter.PCCDetachTotal, exporter.PCCInvalidationsTotal,
+		)
 	}
 	if counterCollector != nil {
 		collectors = append(collectors, counterCollector)
