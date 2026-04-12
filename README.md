@@ -64,6 +64,8 @@ The design intentionally separates three planes:
    layer and tracks attach/detach lifecycle events. Observed via optional kprobes on
    `pcc_file_read_iter`, `pcc_file_write_iter`, `pcc_file_open`, `pcc_lookup`, `pcc_fsync`,
    and attach/detach functions. All PCC probes degrade gracefully when the PCC module is not loaded.
+   PCC metric collection is disabled by default and must be explicitly enabled with
+   `--collector.pcc`.
 
 The `access_intent` label classifies operations into:
 

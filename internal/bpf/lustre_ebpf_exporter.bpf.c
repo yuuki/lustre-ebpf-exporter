@@ -940,6 +940,10 @@ static __always_inline int track_pcc_enter(__u8 op, __u32 s_dev) {
   return 0;
 }
 
+static __always_inline int is_pcc_lifecycle_op(__u8 op) {
+  return op == OP_PCC_ATTACH || op == OP_PCC_DETACH || op == OP_PCC_INVALIDATE;
+}
+
 static __always_inline int emit_pcc_event(void *ctx, struct start_info *info,
     __u8 op, long ret, int emit_bytes) {
   __u64 duration_us = (bpf_ktime_get_ns() - info->start_ns) / 1000;
@@ -949,11 +953,16 @@ static __always_inline int emit_pcc_event(void *ctx, struct start_info *info,
   __u8 intent = intent_for_op(op);
   __u8 errno_class = classify_errno(ret);
 
-  increment_counter(&pcc_counters, info, op, actor_type, intent, size_bytes);
+  /* Lifecycle ops (attach/detach/invalidate) have dedicated metric families
+   * fed via perf events in Go userspace. Exclude them from the aggregated
+   * pcc_counters / pcc_error_counters to avoid double-counting. */
+  if (!is_pcc_lifecycle_op(op)) {
+    increment_counter(&pcc_counters, info, op, actor_type, intent, size_bytes);
 
-  if (errno_class != ERRNO_CLASS_NONE) {
-    increment_error_counter(&pcc_error_counters, info, op,
-        actor_type, intent, errno_class);
+    if (errno_class != ERRNO_CLASS_NONE) {
+      increment_error_counter(&pcc_error_counters, info, op,
+          actor_type, intent, errno_class);
+    }
   }
 
   emit_from_start(ctx, info, PLANE_PCC, op, duration_us, size_bytes,
@@ -1130,9 +1139,7 @@ int pcc_layout_invalidate_enter(struct pt_regs *ctx) {
   struct start_info info = {};
   fill_start_info(&info, 0);
   info.mount_idx = mount_idx;
-  __u8 actor_type = classify_actor_type(info.comm);
-  increment_counter(&pcc_counters, &info, OP_PCC_INVALIDATE,
-      actor_type, INTENT_NAMESPACE_MUTATION, 0);
+  /* Lifecycle op — skip pcc_counters (dedicated metric fed via perf event). */
   emit_from_start(ctx, &info, PLANE_PCC, OP_PCC_INVALIDATE, 0, 0, 0,
       ERRNO_CLASS_NONE);
   return 0;
