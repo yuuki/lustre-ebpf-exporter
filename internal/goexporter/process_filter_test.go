@@ -254,6 +254,13 @@ func TestStripTrailingNumericSuffix(t *testing.T) {
 		{"task-(2)", "task"},       // dash separator before paren
 		{"job_(3)", "job"},         // underscore separator before paren
 
+		// Bracketed numeric suffix.
+		{"worker[10]", "worker"},
+		{"worker[11]", "worker"},
+		{"pool[0]", "pool"},
+		{"task [3]", "task"},       // separator before bracket is also stripped
+		{"job-[99]", "job"},        // dash separator before bracket
+
 		// Edge cases.
 		{"dd", "dd"},
 		{"123", "123"},

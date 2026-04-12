@@ -182,30 +182,43 @@ func (f *ProcessFilter) IsActive() bool {
 	return f.allowlist != nil || f.trimPercent > 0 || f.stripSuffix
 }
 
+func isSeparator(c byte) bool {
+	switch c {
+	case ' ', '-', '_', ':':
+		return true
+	}
+	return false
+}
+
 // stripTrailingNumericSuffix removes a trailing separator+digits suffix from
 // a process name to collapse numbered variants (e.g. "Bun Pool 1" → "Bun Pool").
-// Recognised separators: space, dash, underscore, colon.
-// Parenthesised suffixes like "(1)" are also stripped.
+// Bracketed suffixes like "(1)" and "[1]" are also stripped.
 // Names where digits follow a period (e.g. "python3.11") are left unchanged.
 func stripTrailingNumericSuffix(s string) string {
-	if len(s) >= 3 && s[len(s)-1] == ')' {
-		j := len(s) - 2
-		for j >= 0 && s[j] >= '0' && s[j] <= '9' {
-			j--
+	if n := len(s); n >= 3 {
+		var open byte
+		switch s[n-1] {
+		case ')':
+			open = '('
+		case ']':
+			open = '['
 		}
-		hasDigits := j < len(s)-2
-		if j >= 0 && hasDigits && s[j] == '(' {
-			cut := j
-			if j > 0 {
-				switch s[j-1] {
-				case ' ', '-', '_', ':':
+		if open != 0 {
+			j := n - 2
+			for j >= 0 && s[j] >= '0' && s[j] <= '9' {
+				j--
+			}
+			hasDigits := j < n-2
+			if j >= 0 && hasDigits && s[j] == open {
+				cut := j
+				if j > 0 && isSeparator(s[j-1]) {
 					cut = j - 1
 				}
+				if cut == 0 {
+					return s // would reduce to empty
+				}
+				return s[:cut]
 			}
-			if cut == 0 {
-				return s // would reduce to empty
-			}
-			return s[:cut]
 		}
 	}
 
@@ -219,13 +232,11 @@ func stripTrailingNumericSuffix(s string) string {
 	if i < 0 {
 		return s // entire string is digits
 	}
-	switch s[i] {
-	case ' ', '-', '_', ':':
+	if isSeparator(s[i]) {
 		if i == 0 {
 			return s // would reduce to empty
 		}
 		return s[:i]
-	default:
-		return s // separator not recognised (e.g. period)
 	}
+	return s // separator not recognised (e.g. period)
 }
