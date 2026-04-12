@@ -1,7 +1,6 @@
 package goexporter
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,7 +27,7 @@ func NewInflightTracker(gauge *prometheus.GaugeVec) *InflightTracker {
 // hot path does not pay for username/slurm lookups twice when the caller
 // also needs them for sibling counters.
 func (t *InflightTracker) Update(delta float64, event Event, uid, username, actorType, slurmJobID string) {
-	key := baseLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
+	key := joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
 
 	t.mu.Lock()
 	t.counts[key] += delta
@@ -57,23 +56,3 @@ func baseLabelValues(event Event, uid, username, actorType, slurmJobID string) [
 // long as every call site uses the same arity.
 const labelKeySep = "\x00"
 
-// baseLabelKey joins the base label values in baseLabels order (see prometheus.go).
-func baseLabelKey(fs, mount, uid, username, process, actorType, slurmJobID string) string {
-	total := len(fs) + len(mount) + len(uid) + len(username) + len(process) + len(actorType) + len(slurmJobID) + 6
-	var b strings.Builder
-	b.Grow(total)
-	b.WriteString(fs)
-	b.WriteString(labelKeySep)
-	b.WriteString(mount)
-	b.WriteString(labelKeySep)
-	b.WriteString(uid)
-	b.WriteString(labelKeySep)
-	b.WriteString(username)
-	b.WriteString(labelKeySep)
-	b.WriteString(process)
-	b.WriteString(labelKeySep)
-	b.WriteString(actorType)
-	b.WriteString(labelKeySep)
-	b.WriteString(slurmJobID)
-	return b.String()
-}
