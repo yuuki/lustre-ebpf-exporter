@@ -314,12 +314,16 @@ type MountInfo struct {
 }
 
 func sanitizeComm(raw []byte) string {
-	raw = bytes.TrimLeft(raw, "\x00")
-	end := bytes.IndexByte(raw, 0)
-	if end >= 0 {
-		raw = raw[:end]
+	// Skip leading null bytes without allocating (replaces bytes.TrimLeft).
+	start := 0
+	for start < len(raw) && raw[start] == 0 {
+		start++
 	}
-	return string(raw)
+	end := bytes.IndexByte(raw[start:], 0)
+	if end >= 0 {
+		return string(raw[start : start+end])
+	}
+	return string(raw[start:])
 }
 
 func parseObserverEvent(sample []byte) (Event, error) {
