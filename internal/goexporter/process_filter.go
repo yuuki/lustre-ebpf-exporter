@@ -167,6 +167,16 @@ func (f *ProcessFilter) TrimmedCount() int {
 	return len(f.trimmed.Load().(map[string]struct{}))
 }
 
+// StripName applies suffix normalization only (no allowlist/trim filtering).
+// Use this to produce a consistent key for ops-per-process accumulation so
+// that UpdateTrimSet and Normalize operate on the same names.
+func (f *ProcessFilter) StripName(s string) string {
+	if f.stripSuffix {
+		return stripTrailingNumericSuffix(s)
+	}
+	return s
+}
+
 // IsActive returns true if the filter is doing any filtering.
 func (f *ProcessFilter) IsActive() bool {
 	return f.allowlist != nil || f.trimPercent > 0 || f.stripSuffix

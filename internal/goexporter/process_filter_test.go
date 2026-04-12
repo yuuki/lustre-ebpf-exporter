@@ -300,3 +300,40 @@ func TestProcessFilterStripSuffixWithAllowlist(t *testing.T) {
 		t.Fatalf("expected 'other', got %q", got)
 	}
 }
+
+func TestProcessFilterStripSuffixWithTailTrim(t *testing.T) {
+	t.Parallel()
+	// stripSuffix=true + trimPercent=50: trim set keys must use stripped names
+	// so that numbered variants like "worker-1" are correctly trimmed.
+	f := NewProcessFilter(nil, 50, 1, true)
+
+	// Simulate ops accumulated under stripped names (as normalizeProcess now does).
+	ops := map[string]float64{
+		"dd":     1000,
+		"worker": 5, // stripped form of "worker-1", "worker-2", etc.
+	}
+	f.UpdateTrimSet(ops)
+
+	// "worker-1" should be stripped to "worker", which is in the trim set.
+	if got := f.Normalize("worker-1"); got != "other" {
+		t.Fatalf("expected 'other' (stripped then trimmed), got %q", got)
+	}
+	// "dd" should survive.
+	if got := f.Normalize("dd"); got != "dd" {
+		t.Fatalf("expected 'dd', got %q", got)
+	}
+}
+
+func TestProcessFilterStripName(t *testing.T) {
+	t.Parallel()
+
+	enabled := NewProcessFilter(nil, 0, 1, true)
+	if got := enabled.StripName("worker-3"); got != "worker" {
+		t.Fatalf("expected 'worker', got %q", got)
+	}
+
+	disabled := NewProcessFilter(nil, 0, 1, false)
+	if got := disabled.StripName("worker-3"); got != "worker-3" {
+		t.Fatalf("expected pass-through, got %q", got)
+	}
+}

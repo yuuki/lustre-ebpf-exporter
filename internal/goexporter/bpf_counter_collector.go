@@ -500,8 +500,11 @@ func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
 // tail-trim ranking, and returns the filtered process name.
 func (c *BPFCounterCollector) normalizeProcess(comm [16]byte, opsCount uint64) string {
 	raw := sanitizeComm(comm[:])
+	// Use the suffix-stripped name as the ops accumulation key so that
+	// UpdateTrimSet and Normalize operate on the same names.
+	stripped := c.processFilter.StripName(raw)
 	if opsCount > 0 {
-		c.rawProcessOps[raw] += float64(opsCount)
+		c.rawProcessOps[stripped] += float64(opsCount)
 	}
 	return c.processFilter.Normalize(raw)
 }
