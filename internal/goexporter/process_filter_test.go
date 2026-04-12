@@ -246,6 +246,14 @@ func TestStripTrailingNumericSuffix(t *testing.T) {
 		{"python3", "python3"},
 		{"go1.21.5", "go1.21.5"},
 
+		// Parenthesised numeric suffix.
+		{"worker(1)", "worker"},
+		{"worker(23)", "worker"},
+		{"pool(0)", "pool"},
+		{"worker (1)", "worker"},   // separator before paren is also stripped
+		{"task-(2)", "task"},       // dash separator before paren
+		{"job_(3)", "job"},         // underscore separator before paren
+
 		// Edge cases.
 		{"dd", "dd"},
 		{"123", "123"},
@@ -254,6 +262,11 @@ func TestStripTrailingNumericSuffix(t *testing.T) {
 		{"-1", "-1"},    // would reduce to empty → leave unchanged
 		{"v2", "v2"},    // no recognised separator
 		{"name--42", "name-"},
+		{"(1)", "(1)"},  // would reduce to empty → leave unchanged
+		{"x()", "x()"},         // no digits inside parens → leave unchanged
+		{"x(ab)", "x(ab)"},     // non-digits inside parens → leave unchanged
+		{"a(1)", "a"},          // shortest valid parenthesised input
+		{"foo(bar)-1", "foo(bar)"}, // paren path misses, falls through to separator path
 	}
 	for _, tt := range tests {
 		if got := stripTrailingNumericSuffix(tt.input); got != tt.want {
