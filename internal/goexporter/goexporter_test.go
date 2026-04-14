@@ -13,7 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
+	"github.com/yuuki/lustre-ebpf-exporter/internal/goexporter/slurm"
 )
 
 // testSlurmResolver returns a disabled slurm resolver suitable for tests

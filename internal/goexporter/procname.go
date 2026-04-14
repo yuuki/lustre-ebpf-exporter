@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
+	"github.com/yuuki/lustre-ebpf-exporter/internal/goexporter/slurm"
 )
 
 // procFSReader is an alias for the same injectable reader type used by slurm.Resolver.

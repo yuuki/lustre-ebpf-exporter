@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yuuki/otel-lustre-tracer/internal/goexporter"
+	"github.com/yuuki/lustre-ebpf-exporter/internal/goexporter"
 )
 
 var (

@@ -1,4 +1,4 @@
-module github.com/yuuki/otel-lustre-tracer
+module github.com/yuuki/lustre-ebpf-exporter
 
 go 1.26.0
 

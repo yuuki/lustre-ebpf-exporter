@@ -10,7 +10,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/yuuki/otel-lustre-tracer/internal/goexporter/slurm"
+	"github.com/yuuki/lustre-ebpf-exporter/internal/goexporter/slurm"
 )
 
 // BPFCounterCollector reads aggregated counters from BPF PERCPU_HASH maps

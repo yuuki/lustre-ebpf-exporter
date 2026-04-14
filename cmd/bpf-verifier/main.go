@@ -11,7 +11,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/rlimit"
 
-	"github.com/yuuki/otel-lustre-tracer/internal/bpf"
+	"github.com/yuuki/lustre-ebpf-exporter/internal/bpf"
 )
 
 func main() {

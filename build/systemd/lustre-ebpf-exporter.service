@@ -1,6 +1,6 @@
 [Unit]
 Description=Lustre eBPF Client Activity Exporter
-Documentation=https://github.com/yuuki/otel-lustre-tracer
+Documentation=https://github.com/yuuki/lustre-ebpf-exporter
 After=network.target
 
 [Service]

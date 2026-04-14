@@ -184,7 +184,7 @@ func (e *PrometheusExporter) RenderText() (string, error) {
 
 func gatherToText(families []*dto.MetricFamily) (string, error) {
 	var out strings.Builder
-	enc := expfmt.NewEncoder(&out, expfmt.FmtText)
+	enc := expfmt.NewEncoder(&out, expfmt.NewFormat(expfmt.TypeTextPlain))
 	for _, family := range families {
 		if err := enc.Encode(family); err != nil {
 			return "", fmt.Errorf("encode metric family %s: %w", family.GetName(), err)
