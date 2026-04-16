@@ -124,9 +124,14 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	// Rewrite the `const volatile __u8 uid_labels_enabled` global before load.
 	// When disabled, fill_start_info() in the BPF program skips
 	// bpf_get_current_uid_gid() so every event and counter-map key carries
-	// uid=0 — collapsing PERCPU_HASH rows across users. The `ok` guard keeps
-	// forward compatibility in case the embedded .o predates the const.
-	if v, ok := spec.Variables["uid_labels_enabled"]; ok {
+	// uid=0 — collapsing PERCPU_HASH rows across users. Fail fast when the
+	// operator asked for --uid-labels=false but the embedded .o predates the
+	// toggle: silently falling back would keep collecting per-UID kernel-side
+	// while userspace drops the labels, which misleads the startup log and
+	// the types.go doc comment about end-to-end behavior.
+	v, ok := spec.Variables["uid_labels_enabled"]
+	switch {
+	case ok:
 		val := uint8(1)
 		if !cfg.UIDLabelsEnabled {
 			val = 0
@@ -134,6 +139,8 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		if err := v.Set(val); err != nil {
 			return nil, fmt.Errorf("set uid_labels_enabled: %w", err)
 		}
+	case !cfg.UIDLabelsEnabled:
+		return nil, fmt.Errorf("embedded BPF object does not expose uid_labels_enabled; --uid-labels=false cannot be honored")
 	}
 	// Remove PCC BPF programs from spec when PCC is disabled to avoid
 	// unnecessary verifier work at startup.
