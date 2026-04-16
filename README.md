@@ -296,6 +296,7 @@ Useful flags:
 - `--process-tail-trim-percent` (dynamically trim the bottom N% of processes by operation count; default 0 = disabled)
 - `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 1)
 - `--process-name-strip-suffix` (strip trailing separator+digits from process names; default `false`)
+- `--uid-labels` (default `true`; when `false`, drops `uid` and `username` labels and skips kernel-side `bpf_get_current_uid_gid()` — collapsing BPF PERCPU_HASH rows across users)
 - `--web.listen-address`
 - `--web.telemetry-path`
 - `--version`

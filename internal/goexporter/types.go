@@ -330,6 +330,14 @@ type Config struct {
 	// ProcessNameStripSuffix removes trailing separator+digits suffixes from
 	// process names before allowlist/trim checks (e.g. "Bun Pool 1" → "Bun Pool").
 	ProcessNameStripSuffix bool
+
+	// UIDLabelsEnabled controls per-UID measurement end-to-end. Default true.
+	// When false, the BPF program skips bpf_get_current_uid_gid() so every
+	// counter-map key and perf event carries uid=0 — collapsing PERCPU_HASH
+	// rows across users — and the Go exporter omits the uid/username labels
+	// from every metric (they're paired because a constant-zero uid would
+	// otherwise resolve to a single username for every row).
+	UIDLabelsEnabled bool
 }
 
 type Event struct {

@@ -79,6 +79,12 @@ typedef unsigned char __u8;
 typedef unsigned int __u32;
 typedef unsigned long long __u64;
 
+/* Runtime-configurable toggle rewritten by userspace before collection load.
+ * When 0, fill_start_info() skips bpf_get_current_uid_gid() so every event
+ * and counter-map key carries uid=0 — collapses kernel-side PERCPU_HASH rows
+ * across users and lets the Go exporter drop uid/username labels entirely. */
+const volatile __u8 uid_labels_enabled = 1;
+
 #pragma clang attribute push(__attribute__((preserve_access_index)), apply_to = record)
 struct super_block {
   __u32 s_dev;
@@ -357,9 +363,14 @@ static __always_inline __u64 current_tid(void) {
 
 static __always_inline void fill_start_info(struct start_info *info, __u64 request_ptr) {
   __u64 pid_tgid = bpf_get_current_pid_tgid();
-  __u64 uid_gid = bpf_get_current_uid_gid();
   info->start_ns = bpf_ktime_get_ns();
-  info->uid = uid_gid;
+  /* Skip the uid helper entirely when labels are disabled — saves a helper
+   * call on every op and folds agg_key/error_agg_key buckets to uid=0. */
+  if (uid_labels_enabled) {
+    info->uid = (__u32)bpf_get_current_uid_gid();
+  } else {
+    info->uid = 0;
+  }
   info->pid = pid_tgid >> 32;
   info->request_ptr = request_ptr;
   bpf_get_current_comm(&info->comm, sizeof(info->comm));

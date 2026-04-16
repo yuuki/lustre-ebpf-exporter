@@ -121,6 +121,20 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	if err != nil {
 		return nil, err
 	}
+	// Rewrite the `const volatile __u8 uid_labels_enabled` global before load.
+	// When disabled, fill_start_info() in the BPF program skips
+	// bpf_get_current_uid_gid() so every event and counter-map key carries
+	// uid=0 — collapsing PERCPU_HASH rows across users. The `ok` guard keeps
+	// forward compatibility in case the embedded .o predates the const.
+	if v, ok := spec.Variables["uid_labels_enabled"]; ok {
+		val := uint8(1)
+		if !cfg.UIDLabelsEnabled {
+			val = 0
+		}
+		if err := v.Set(val); err != nil {
+			return nil, fmt.Errorf("set uid_labels_enabled: %w", err)
+		}
+	}
 	// Remove PCC BPF programs from spec when PCC is disabled to avoid
 	// unnecessary verifier work at startup.
 	if !cfg.PCCEnabled {

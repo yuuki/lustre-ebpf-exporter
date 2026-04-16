@@ -14,13 +14,15 @@ type InflightTracker struct {
 	counts       map[string]float64
 	gauge        *prometheus.GaugeVec
 	slurmEnabled bool
+	uidEnabled   bool
 }
 
-func NewInflightTracker(gauge *prometheus.GaugeVec, slurmEnabled bool) *InflightTracker {
+func NewInflightTracker(gauge *prometheus.GaugeVec, slurmEnabled, uidEnabled bool) *InflightTracker {
 	return &InflightTracker{
 		counts:       map[string]float64{},
 		gauge:        gauge,
 		slurmEnabled: slurmEnabled,
+		uidEnabled:   uidEnabled,
 	}
 }
 
@@ -30,12 +32,10 @@ func NewInflightTracker(gauge *prometheus.GaugeVec, slurmEnabled bool) *Inflight
 // hot path does not pay for username/slurm lookups twice when the caller
 // also needs them for sibling counters.
 func (t *InflightTracker) Update(delta float64, event Event, uid, username, actorType, slurmJobID string) {
-	var key string
-	if t.slurmEnabled {
-		key = joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID)
-	} else {
-		key = joinLabelKey(event.FSName, event.MountPath, uid, username, event.Comm, actorType)
-	}
+	vals := baseLabelValues(event, uid, username, actorType, slurmJobID, t.slurmEnabled, t.uidEnabled)
+	// The positional arity already encodes both toggles (slurm × uid) so the
+	// label-values slice doubles as a collision-free cache key.
+	key := joinLabelKey(vals...)
 
 	t.mu.Lock()
 	t.counts[key] += delta
@@ -48,41 +48,61 @@ func (t *InflightTracker) Update(delta float64, event Event, uid, username, acto
 	}
 	t.mu.Unlock()
 
-	t.gauge.WithLabelValues(baseLabelValues(event, uid, username, actorType, slurmJobID, t.slurmEnabled)...).Set(val)
+	t.gauge.WithLabelValues(vals...).Set(val)
 }
 
-// baseLabelValues returns label values in baseLabels or baseLabelsNoSlurm positional order
-// depending on slurmEnabled. Centralizing this prevents drift between the gauge, counters,
-// and any future metric that shares the base label schema.
-func baseLabelValues(event Event, uid, username, actorType, slurmJobID string, slurmEnabled bool) []string {
-	if slurmEnabled {
-		return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType, slurmJobID}
+// baseLabelValues returns label values matching buildBaseLabels(slurmEnabled, uidEnabled).
+// When !uidEnabled, uid/username are omitted. Centralizing this prevents drift between
+// the gauge, counters, and any future metric that shares the base label schema.
+func baseLabelValues(event Event, uid, username, actorType, slurmJobID string, slurmEnabled, uidEnabled bool) []string {
+	vals := []string{event.FSName, event.MountPath}
+	if uidEnabled {
+		vals = append(vals, uid, username)
 	}
-	return []string{event.FSName, event.MountPath, uid, username, event.Comm, actorType}
+	vals = append(vals, event.Comm, actorType)
+	if slurmEnabled {
+		vals = append(vals, slurmJobID)
+	}
+	return vals
 }
 
-// lliteLabelValues returns label values in lliteLabels or lliteLabelsNoSlurm positional order.
-func lliteLabelValues(fsName, mountPath, intent, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled bool) []string {
-	if slurmEnabled {
-		return []string{fsName, mountPath, intent, op, uid, username, comm, actorType, slurmJobID}
+// lliteLabelValues returns label values matching buildLliteLabels(slurmEnabled, uidEnabled).
+func lliteLabelValues(fsName, mountPath, intent, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled bool) []string {
+	vals := []string{fsName, mountPath, intent, op}
+	if uidEnabled {
+		vals = append(vals, uid, username)
 	}
-	return []string{fsName, mountPath, intent, op, uid, username, comm, actorType}
+	vals = append(vals, comm, actorType)
+	if slurmEnabled {
+		vals = append(vals, slurmJobID)
+	}
+	return vals
 }
 
-// ptlrpcLabelValues returns label values in ptlrpcLabels or ptlrpcLabelsNoSlurm positional order.
-func ptlrpcLabelValues(fsName, mountPath, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled bool) []string {
-	if slurmEnabled {
-		return []string{fsName, mountPath, op, uid, username, comm, actorType, slurmJobID}
+// ptlrpcLabelValues returns label values matching buildPtlrpcLabels(slurmEnabled, uidEnabled).
+func ptlrpcLabelValues(fsName, mountPath, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled bool) []string {
+	vals := []string{fsName, mountPath, op}
+	if uidEnabled {
+		vals = append(vals, uid, username)
 	}
-	return []string{fsName, mountPath, op, uid, username, comm, actorType}
+	vals = append(vals, comm, actorType)
+	if slurmEnabled {
+		vals = append(vals, slurmJobID)
+	}
+	return vals
 }
 
-// pccAttachLabelValues returns label values in pccAttachLabels or pccAttachLabelsNoSlurm positional order.
-func pccAttachLabelValues(fsName, mountPath, mode, trigger, uid, username, comm, actorType, slurmJobID string, slurmEnabled bool) []string {
-	if slurmEnabled {
-		return []string{fsName, mountPath, mode, trigger, uid, username, comm, actorType, slurmJobID}
+// pccAttachLabelValues returns label values matching buildPCCAttachLabels(slurmEnabled, uidEnabled).
+func pccAttachLabelValues(fsName, mountPath, mode, trigger, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled bool) []string {
+	vals := []string{fsName, mountPath, mode, trigger}
+	if uidEnabled {
+		vals = append(vals, uid, username)
 	}
-	return []string{fsName, mountPath, mode, trigger, uid, username, comm, actorType}
+	vals = append(vals, comm, actorType)
+	if slurmEnabled {
+		vals = append(vals, slurmJobID)
+	}
+	return vals
 }
 
 // labelKeySep is used to join positional label values into a cache key.

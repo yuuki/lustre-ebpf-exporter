@@ -31,6 +31,11 @@ type BPFCounterCollector struct {
 	// pid->jobid mapping into a BPF LRU map and include job_id in agg_key.
 	slurmResolver *slurm.Resolver
 	slurmEnabled  bool
+	// uidEnabled mirrors the BPF-side `uid_labels_enabled` global. When
+	// false, the kernel has already zeroed agg_key.uid so PERCPU_HASH rows
+	// fold across users; userspace skips the UsernameResolver syscall on
+	// the drain path and omits the uid/username label values.
+	uidEnabled bool
 
 	// Accumulator maps grow monotonically: one entry per unique label
 	// combination observed. BPF-side maps are bounded (max_entries), but
@@ -70,32 +75,32 @@ type BPFCounterCollector struct {
 	pccErrorsDesc    *prometheus.Desc
 }
 
-// lliteAccum stores label values in lliteLabels or lliteLabelsNoSlurm order.
+// lliteAccum stores label values in buildLliteLabels order.
 type lliteAccum struct {
 	opsCount float64
 	bytesSum float64
 	values   []string
 }
 
-// rpcAccum stores label values in ptlrpcLabels or ptlrpcLabelsNoSlurm order.
+// rpcAccum stores label values in buildPtlrpcLabels order.
 type rpcAccum struct {
 	opsCount float64
 	values   []string
 }
 
-// lliteErrorAccum stores label values in lliteErrLabels or lliteErrLabelsNoSlurm order.
+// lliteErrorAccum stores label values in buildLliteErrLabels order.
 type lliteErrorAccum struct {
 	opsCount float64
 	values   []string
 }
 
-// rpcErrorAccum stores label values in rpcErrorLabels or rpcErrorLabelsNoSlurm order.
+// rpcErrorAccum stores label values in buildRPCErrorLabels order.
 type rpcErrorAccum struct {
 	opsCount float64
 	values   []string
 }
 
-func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter, slurmEnabled bool) *BPFCounterCollector {
+func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap *ebpf.Map, mountInfos []MountInfo, resolver *UsernameResolver, slurmResolver *slurm.Resolver, processFilter *ProcessFilter, slurmEnabled, uidEnabled bool) *BPFCounterCollector {
 	c := &BPFCounterCollector{
 		lliteMap:      lliteMap,
 		rpcMap:        rpcMap,
@@ -107,8 +112,9 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 		resolver:      resolver,
 		slurmResolver: slurmResolver,
 		slurmEnabled:  slurmEnabled,
+		uidEnabled:    uidEnabled,
 		processFilter: processFilter,
-		processOps: map[string]float64{},
+		processOps:    map[string]float64{},
 		lliteAcc:      map[string]*lliteAccum{},
 		rpcAcc:        map[string]*rpcAccum{},
 		lliteErrorAcc: map[string]*lliteErrorAccum{},
@@ -118,44 +124,44 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 		accessOpsDesc: prometheus.NewDesc(
 			"lustre_client_access_operations_total",
 			"Aggregated llite access operation count",
-			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
+			buildLliteLabels(slurmEnabled, uidEnabled), nil,
 		),
 		dataBytesDesc: prometheus.NewDesc(
 			"lustre_client_data_bytes_total",
 			"Aggregated llite data volume in bytes",
-			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
+			buildLliteLabels(slurmEnabled, uidEnabled), nil,
 		),
 		rpcWaitOpsDesc: prometheus.NewDesc(
 			"lustre_client_rpc_wait_operations_total",
 			"Aggregated ptlrpc queue wait count",
-			pickLabels(slurmEnabled,ptlrpcLabels, ptlrpcLabelsNoSlurm), nil,
+			buildPtlrpcLabels(slurmEnabled, uidEnabled), nil,
 		),
 		accessErrorsDesc: prometheus.NewDesc(
 			"lustre_client_operation_errors_total",
 			"Aggregated llite operation error count by errno class",
-			pickLabels(slurmEnabled,lliteErrLabels, lliteErrLabelsNoSlurm), nil,
+			buildLliteErrLabels(slurmEnabled, uidEnabled), nil,
 		),
 		rpcErrorsDesc: prometheus.NewDesc(
 			"lustre_client_rpc_errors_total",
 			"Aggregated ptlrpc error/recovery event count",
-			pickLabels(slurmEnabled,rpcErrorLabels, rpcErrorLabelsNoSlurm), nil,
+			buildRPCErrorLabels(slurmEnabled, uidEnabled), nil,
 		),
 	}
 	if pccMap != nil {
 		c.pccOpsDesc = prometheus.NewDesc(
 			"lustre_client_pcc_operations_total",
 			"Aggregated PCC I/O operation count",
-			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
+			buildLliteLabels(slurmEnabled, uidEnabled), nil,
 		)
 		c.pccBytesDesc = prometheus.NewDesc(
 			"lustre_client_pcc_data_bytes_total",
 			"Aggregated PCC data volume in bytes",
-			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm), nil,
+			buildLliteLabels(slurmEnabled, uidEnabled), nil,
 		)
 		c.pccErrorsDesc = prometheus.NewDesc(
 			"lustre_client_pcc_operation_errors_total",
 			"Aggregated PCC operation error count by errno class",
-			pickLabels(slurmEnabled,lliteErrLabels, lliteErrLabelsNoSlurm), nil,
+			buildLliteErrLabels(slurmEnabled, uidEnabled), nil,
 		)
 	}
 	return c
@@ -335,26 +341,32 @@ func drainCounterMap(m *ebpf.Map, onEntry func(key bpfAggKey, total bpfCounterVa
 	}
 }
 
-// drainLLiteStyle drains a BPF counter map with the lliteLabels or lliteLabelsNoSlurm schema
+// drainLLiteStyle drains a BPF counter map with the llite label schema
 // into the provided accumulator map. Used by both llite and PCC planes.
+// When uidEnabled is false the kernel has already zeroed key.UID (see
+// fill_start_info in the BPF source), so we both skip the resolver syscall
+// and omit the uid/username label values to match the metric descriptor.
 func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*lliteAccum) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
-		uid := strconv.FormatUint(uint64(key.UID), 10)
-		username := c.resolver.Resolve(key.UID)
+		var uid, username string
+		if c.uidEnabled {
+			uid = strconv.FormatUint(uint64(key.UID), 10)
+			username = c.resolver.Resolve(key.UID)
+		}
 		actor := actorTypeName(key.ActorType)
-		// slurm_job_id is always empty for counters; key excludes it since it is constant.
-		accKey := joinLabelKey(fsName, mountPath, intent, op, uid, username, process, actor)
+
+		vals := lliteLabelValues(fsName, mountPath, intent, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
+		// slurm_job_id is always empty for counters; the label arity
+		// already encodes both slurm and uid toggles so vals is a
+		// collision-free accumulator key.
+		accKey := joinLabelKey(vals...)
 
 		a, ok := acc[accKey]
 		if !ok {
-			vals := []string{fsName, mountPath, intent, op, uid, username, process, actor}
-			if c.slurmEnabled {
-				vals = append(vals, "")
-			}
 			a = &lliteAccum{values: vals}
 			acc[accKey] = a
 		}
@@ -372,17 +384,18 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		op := rawOpToName(key.Op)
-		uid := strconv.FormatUint(uint64(key.UID), 10)
-		username := c.resolver.Resolve(key.UID)
+		var uid, username string
+		if c.uidEnabled {
+			uid = strconv.FormatUint(uint64(key.UID), 10)
+			username = c.resolver.Resolve(key.UID)
+		}
 		actor := actorTypeName(key.ActorType)
-		accKey := joinLabelKey(fsName, mountPath, op, uid, username, process, actor)
+
+		vals := ptlrpcLabelValues(fsName, mountPath, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
+		accKey := joinLabelKey(vals...)
 
 		acc, ok := c.rpcAcc[accKey]
 		if !ok {
-			vals := []string{fsName, mountPath, op, uid, username, process, actor}
-			if c.slurmEnabled {
-				vals = append(vals, "")
-			}
 			acc = &rpcAccum{values: vals}
 			c.rpcAcc[accKey] = acc
 		}
@@ -416,31 +429,32 @@ func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bp
 	}
 }
 
-// drainLLiteStyleErrors drains a BPF error counter map with the lliteErrLabels or
-// drainLLiteStyleErrors drains a BPF error counter map with the lliteErrLabels or
-// lliteErrLabelsNoSlurm schema into the provided accumulator map. Used by both llite and PCC.
-// When slurmEnabled, slurm_job_id is inserted before errno_class.
+// drainLLiteStyleErrors drains a BPF error counter map with the llite error
+// label schema into the provided accumulator map. Used by both llite and PCC.
+// When slurmEnabled, slurm_job_id is inserted before errno_class; when
+// !uidEnabled, uid/username are omitted entirely.
 func (c *BPFCounterCollector) drainLLiteStyleErrors(m *ebpf.Map, acc map[string]*lliteErrorAccum) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
-		uid := strconv.FormatUint(uint64(key.UID), 10)
-		username := c.resolver.Resolve(key.UID)
+		var uid, username string
+		if c.uidEnabled {
+			uid = strconv.FormatUint(uint64(key.UID), 10)
+			username = c.resolver.Resolve(key.UID)
+		}
 		actor := actorTypeName(key.ActorType)
 		errno := errnoClassName(key.Reason)
-		// slurm_job_id is always empty for counters; key excludes it since it is constant.
-		accKey := joinLabelKey(fsName, mountPath, intent, op, uid, username, process, actor, errno)
+
+		// lliteLabelValues owns the shared prefix (including slurm_job_id
+		// placement); append errno_class to match buildLliteErrLabels order.
+		base := lliteLabelValues(fsName, mountPath, intent, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
+		vals := append(base, errno)
+		accKey := joinLabelKey(vals...)
 
 		a, ok := acc[accKey]
 		if !ok {
-			vals := []string{fsName, mountPath, intent, op, uid, username, process, actor}
-			if c.slurmEnabled {
-				vals = append(vals, "", errno)
-			} else {
-				vals = append(vals, errno)
-			}
 			a = &lliteErrorAccum{values: vals}
 			acc[accKey] = a
 		}
@@ -460,17 +474,21 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 			eventName = unknownRPCEvent
 		}
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
-		uid := strconv.FormatUint(uint64(key.UID), 10)
-		username := c.resolver.Resolve(key.UID)
+		var uid, username string
+		if c.uidEnabled {
+			uid = strconv.FormatUint(uint64(key.UID), 10)
+			username = c.resolver.Resolve(key.UID)
+		}
 		actor := actorTypeName(key.ActorType)
-		accKey := joinLabelKey(fsName, mountPath, eventName, uid, username, process, actor)
+
+		// buildRPCErrorLabels order: fs, mount, event, [uid, username,]
+		// process, actor_type, [slurm_job_id]. ptlrpcLabelValues happens
+		// to match after substituting "event" for "op".
+		vals := ptlrpcLabelValues(fsName, mountPath, eventName, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
+		accKey := joinLabelKey(vals...)
 
 		acc, ok := c.rpcErrorAcc[accKey]
 		if !ok {
-			vals := []string{fsName, mountPath, eventName, uid, username, process, actor}
-			if c.slurmEnabled {
-				vals = append(vals, "")
-			}
 			acc = &rpcErrorAccum{values: vals}
 			c.rpcErrorAcc[accKey] = acc
 		}
