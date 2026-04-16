@@ -75,26 +75,22 @@ type BPFCounterCollector struct {
 	pccErrorsDesc    *prometheus.Desc
 }
 
-// lliteAccum stores label values in buildLliteLabels order.
 type lliteAccum struct {
 	opsCount float64
 	bytesSum float64
 	values   []string
 }
 
-// rpcAccum stores label values in buildPtlrpcLabels order.
 type rpcAccum struct {
 	opsCount float64
 	values   []string
 }
 
-// lliteErrorAccum stores label values in buildLliteErrLabels order.
 type lliteErrorAccum struct {
 	opsCount float64
 	values   []string
 }
 
-// rpcErrorAccum stores label values in buildRPCErrorLabels order.
 type rpcErrorAccum struct {
 	opsCount float64
 	values   []string
