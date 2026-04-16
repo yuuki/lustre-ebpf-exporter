@@ -341,28 +341,33 @@ func drainCounterMap(m *ebpf.Map, onEntry func(key bpfAggKey, total bpfCounterVa
 	}
 }
 
+// resolveUID returns the uid/username pair for a BPF counter key. Returns
+// empty strings when uidEnabled is false: the kernel has already zeroed
+// key.UID (see fill_start_info in the BPF source), so we skip the
+// UsernameResolver syscall and keep the label values in sync with the
+// metric descriptor arity produced by buildLliteLabels et al.
+func (c *BPFCounterCollector) resolveUID(keyUID uint32) (uid, username string) {
+	if !c.uidEnabled {
+		return "", ""
+	}
+	return strconv.FormatUint(uint64(keyUID), 10), c.resolver.Resolve(keyUID)
+}
+
 // drainLLiteStyle drains a BPF counter map with the llite label schema
 // into the provided accumulator map. Used by both llite and PCC planes.
-// When uidEnabled is false the kernel has already zeroed key.UID (see
-// fill_start_info in the BPF source), so we both skip the resolver syscall
-// and omit the uid/username label values to match the metric descriptor.
 func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*lliteAccum) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
-		var uid, username string
-		if c.uidEnabled {
-			uid = strconv.FormatUint(uint64(key.UID), 10)
-			username = c.resolver.Resolve(key.UID)
-		}
+		uid, username := c.resolveUID(key.UID)
 		actor := actorTypeName(key.ActorType)
 
-		vals := lliteLabelValues(fsName, mountPath, intent, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
 		// slurm_job_id is always empty for counters; the label arity
 		// already encodes both slurm and uid toggles so vals is a
 		// collision-free accumulator key.
+		vals := lliteLabelValues(fsName, mountPath, intent, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
 		accKey := joinLabelKey(vals...)
 
 		a, ok := acc[accKey]
@@ -384,11 +389,7 @@ func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		op := rawOpToName(key.Op)
-		var uid, username string
-		if c.uidEnabled {
-			uid = strconv.FormatUint(uint64(key.UID), 10)
-			username = c.resolver.Resolve(key.UID)
-		}
+		uid, username := c.resolveUID(key.UID)
 		actor := actorTypeName(key.ActorType)
 
 		vals := ptlrpcLabelValues(fsName, mountPath, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
@@ -431,19 +432,14 @@ func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bp
 
 // drainLLiteStyleErrors drains a BPF error counter map with the llite error
 // label schema into the provided accumulator map. Used by both llite and PCC.
-// When slurmEnabled, slurm_job_id is inserted before errno_class; when
-// !uidEnabled, uid/username are omitted entirely.
+// When slurmEnabled, slurm_job_id is inserted before errno_class.
 func (c *BPFCounterCollector) drainLLiteStyleErrors(m *ebpf.Map, acc map[string]*lliteErrorAccum) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
-		var uid, username string
-		if c.uidEnabled {
-			uid = strconv.FormatUint(uint64(key.UID), 10)
-			username = c.resolver.Resolve(key.UID)
-		}
+		uid, username := c.resolveUID(key.UID)
 		actor := actorTypeName(key.ActorType)
 		errno := errnoClassName(key.Reason)
 
@@ -474,11 +470,7 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 			eventName = unknownRPCEvent
 		}
 		process := c.normalizeProcess(key.Comm, total.OpsCount)
-		var uid, username string
-		if c.uidEnabled {
-			uid = strconv.FormatUint(uint64(key.UID), 10)
-			username = c.resolver.Resolve(key.UID)
-		}
+		uid, username := c.resolveUID(key.UID)
 		actor := actorTypeName(key.ActorType)
 
 		// buildRPCErrorLabels order: fs, mount, event, [uid, username,]
