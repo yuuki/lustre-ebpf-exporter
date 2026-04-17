@@ -99,6 +99,22 @@ func pccAttachLabelValues(fsName, mountPath, mode, trigger, uid, username, comm,
 	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
 }
 
+func workloadAccessLabelValues(fsName, mountPath, intent, uid, username, comm, actorType, slurmJobID, aggregation string, slurmEnabled, uidEnabled bool) []string {
+	vals := []string{fsName, mountPath, intent}
+	vals = appendUIDValues(vals, uid, username, uidEnabled)
+	vals = append(vals, comm, actorType)
+	vals = appendSlurmValue(vals, slurmJobID, slurmEnabled)
+	return append(vals, aggregation)
+}
+
+func workloadRPCWaitLabelValues(fsName, mountPath, uid, username, comm, actorType, slurmJobID, aggregation string, slurmEnabled, uidEnabled bool) []string {
+	vals := []string{fsName, mountPath}
+	vals = appendUIDValues(vals, uid, username, uidEnabled)
+	vals = append(vals, comm, actorType)
+	vals = appendSlurmValue(vals, slurmJobID, slurmEnabled)
+	return append(vals, aggregation)
+}
+
 // labelKeySep is used to join positional label values into a cache key.
 // Null bytes cannot legitimately appear inside label values sourced from
 // /proc, sanitized comms, or numeric ids, so collisions are impossible as
@@ -123,4 +139,3 @@ func joinLabelKey(parts ...string) string {
 	}
 	return b.String()
 }
-
