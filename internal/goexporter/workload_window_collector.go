@@ -18,18 +18,18 @@ const (
 )
 
 type WorkloadFilterConfig struct {
-	TopN           int
-	PromoteWindows int
-	DemoteWindows  int
-	TTLWindows     uint64
+	TopN             int
+	PromoteWindows   int
+	DemoteWindows    int
+	RetentionWindows uint64
 }
 
 func DefaultWorkloadFilterConfig() WorkloadFilterConfig {
 	return WorkloadFilterConfig{
-		TopN:           5,
-		PromoteWindows: 2,
-		DemoteWindows:  3,
-		TTLWindows:     12,
+		TopN:             5,
+		PromoteWindows:   2,
+		DemoteWindows:    3,
+		RetentionWindows: 12,
 	}
 }
 
@@ -43,9 +43,11 @@ const (
 )
 
 type entityVisibility struct {
-	State       visibilityState
-	PromoteHits int
-	DemoteHits  int
+	State        visibilityState
+	PromoteHits  int
+	DemoteHits   int
+	LastSeenTick uint64
+	VisibleNow   bool
 }
 
 type accessEntityOpKey struct {
@@ -187,6 +189,7 @@ type accessRelevance struct {
 type seriesMeta struct {
 	Labels          []string
 	LastUpdatedTick uint64
+	Visible         bool
 }
 
 type counterSeries struct {
@@ -314,10 +317,7 @@ func (c *WorkloadWindowCollector) shouldEmitSeries(meta seriesMeta) bool {
 	if aggregation == aggregationTotal || aggregation == aggregationOther {
 		return true
 	}
-	if c.cfg.TTLWindows == 0 {
-		return true
-	}
-	return c.tick-meta.LastUpdatedTick <= c.cfg.TTLWindows
+	return meta.Visible
 }
 
 func (c *WorkloadWindowCollector) ObserveAccess(event Event, uid, username, actorType, slurmJobID string) {
@@ -391,6 +391,7 @@ func (c *WorkloadWindowCollector) RotateWindow() {
 	c.tick++
 	c.rotateAccessLocked()
 	c.rotateRPCLocked()
+	c.purgeExpiredLocked()
 	c.currentAccess = map[accessEntityOpKey]*accessAggregate{}
 	c.currentRPC = map[rpcEntityKey]*rpcAggregate{}
 }
@@ -474,13 +475,14 @@ func (c *WorkloadWindowCollector) rotateAccessLocked() {
 
 		relevance := relevanceByEntity[entityKey]
 		stateKey := c.accessStateKey(entityKey)
-		next, visible := transitionVisibility(c.accessState[stateKey], relevance.Keep, relevance.HardKeep, c.cfg.PromoteWindows, c.cfg.DemoteWindows)
+		next, visible := transitionVisibility(c.accessState[stateKey], relevance.Keep, relevance.HardKeep, c.cfg.PromoteWindows, c.cfg.DemoteWindows, c.tick)
 		c.accessState[stateKey] = next
 
 		if visible {
 			visibleByLane[exportLane] = append(visibleByLane[exportLane], rankedAccessEntity{Key: entityKey, Aggregate: agg, Score: relevance.Score})
 			continue
 		}
+		c.hideAccessSeriesLocked(exportLane, entityKey.UID, entityKey.Username, entityKey.Process, entityKey.SlurmJobID)
 		other := otherByLane[exportLane]
 		other.Add(agg)
 		otherByLane[exportLane] = other
@@ -510,6 +512,7 @@ func (c *WorkloadWindowCollector) rotateAccessLocked() {
 				c.incrementAccessSeriesLocked(lane, item.Key.UID, item.Key.Username, item.Key.Process, item.Key.SlurmJobID, aggregationIndividual, item.Aggregate)
 				continue
 			}
+			c.hideAccessSeriesLocked(lane, item.Key.UID, item.Key.Username, item.Key.Process, item.Key.SlurmJobID)
 			other := otherByLane[lane]
 			other.Add(item.Aggregate)
 			otherByLane[lane] = other
@@ -551,12 +554,13 @@ func (c *WorkloadWindowCollector) rotateRPCLocked() {
 			relevance.Score = math.Max(relevance.Score, 1.0)
 		}
 		stateKey := c.rpcStateKey(key)
-		next, visible := transitionVisibility(c.rpcState[stateKey], relevance.Keep, relevance.HardKeep, c.cfg.PromoteWindows, c.cfg.DemoteWindows)
+		next, visible := transitionVisibility(c.rpcState[stateKey], relevance.Keep, relevance.HardKeep, c.cfg.PromoteWindows, c.cfg.DemoteWindows, c.tick)
 		c.rpcState[stateKey] = next
 		if visible {
 			visibleByLane[laneKey] = append(visibleByLane[laneKey], rankedRPCEntity{Key: key, Aggregate: *agg, Score: relevance.Score})
 			continue
 		}
+		c.hideRPCSeriesLocked(laneKey, key.UID, key.Username, key.Process, key.SlurmJobID)
 		other := otherByLane[laneKey]
 		other.Add(*agg)
 		otherByLane[laneKey] = other
@@ -582,6 +586,7 @@ func (c *WorkloadWindowCollector) rotateRPCLocked() {
 				c.incrementRPCSeriesLocked(lane, item.Key.UID, item.Key.Username, item.Key.Process, item.Key.SlurmJobID, aggregationIndividual, item.Aggregate)
 				continue
 			}
+			c.hideRPCSeriesLocked(lane, item.Key.UID, item.Key.Username, item.Key.Process, item.Key.SlurmJobID)
 			other := otherByLane[lane]
 			other.Add(item.Aggregate)
 			otherByLane[lane] = other
@@ -647,71 +652,100 @@ func share(value, total float64) float64 {
 	return value / total
 }
 
-func transitionVisibility(current entityVisibility, candidate, hard bool, promoteWindows, demoteWindows int) (entityVisibility, bool) {
+func transitionVisibility(current entityVisibility, candidate, hard bool, promoteWindows, demoteWindows int, tick uint64) (entityVisibility, bool) {
 	if hard {
-		return entityVisibility{State: visibilityKept}, true
+		return entityVisibility{State: visibilityKept, LastSeenTick: tick, VisibleNow: true}, true
 	}
 	if candidate {
 		switch current.State {
 		case visibilityKept, visibilityDemoting:
-			return entityVisibility{State: visibilityKept}, true
+			return entityVisibility{State: visibilityKept, LastSeenTick: tick, VisibleNow: true}, true
 		case visibilityPromoting:
 			current.PromoteHits++
 			if current.PromoteHits >= promoteWindows {
-				return entityVisibility{State: visibilityKept}, true
+				return entityVisibility{State: visibilityKept, LastSeenTick: tick, VisibleNow: true}, true
 			}
 			current.State = visibilityPromoting
+			current.LastSeenTick = tick
+			current.VisibleNow = false
 			return current, false
 		default:
 			if promoteWindows <= 1 {
-				return entityVisibility{State: visibilityKept}, true
+				return entityVisibility{State: visibilityKept, LastSeenTick: tick, VisibleNow: true}, true
 			}
-			return entityVisibility{State: visibilityPromoting, PromoteHits: 1}, false
+			return entityVisibility{State: visibilityPromoting, PromoteHits: 1, LastSeenTick: tick, VisibleNow: false}, false
 		}
 	}
 
 	switch current.State {
 	case visibilityKept:
 		if demoteWindows <= 1 {
-			return entityVisibility{State: visibilitySuppressed}, false
+			return entityVisibility{State: visibilitySuppressed, LastSeenTick: tick, VisibleNow: false}, false
 		}
-		return entityVisibility{State: visibilityDemoting, DemoteHits: 1}, true
+		return entityVisibility{State: visibilityDemoting, DemoteHits: 1, LastSeenTick: tick, VisibleNow: true}, true
 	case visibilityDemoting:
 		current.DemoteHits++
 		if current.DemoteHits >= demoteWindows {
-			return entityVisibility{State: visibilitySuppressed}, false
+			return entityVisibility{State: visibilitySuppressed, LastSeenTick: tick, VisibleNow: false}, false
 		}
 		current.State = visibilityDemoting
+		current.LastSeenTick = tick
+		current.VisibleNow = true
 		return current, true
 	default:
-		return entityVisibility{State: visibilitySuppressed}, false
+		return entityVisibility{State: visibilitySuppressed, LastSeenTick: tick, VisibleNow: false}, false
 	}
 }
 
 func (c *WorkloadWindowCollector) incrementAccessSeriesLocked(lane accessExportLane, uid, username, process, slurmJobID, aggregation string, agg accessAggregate) {
 	labels := workloadAccessLabelValues(lane.FSName, lane.MountPath, lane.Intent, uid, username, process, lane.ActorType, slurmJobID, aggregation, c.slurmEnabled, c.uidEnabled)
 	if agg.Ops > 0 {
-		c.incrementCounterSeriesLocked(c.accessOpsSeries, labels, agg.Ops)
+		c.incrementCounterSeriesLocked(c.accessOpsSeries, labels, agg.Ops, aggregation)
 	}
 	if agg.Bytes > 0 {
-		c.incrementCounterSeriesLocked(c.dataBytesSeries, labels, agg.Bytes)
+		c.incrementCounterSeriesLocked(c.dataBytesSeries, labels, agg.Bytes, aggregation)
 	}
 	if agg.LatencyHist.Count > 0 {
-		c.incrementHistogramSeriesLocked(c.accessHistSeries, labels, agg.LatencyHist)
+		c.incrementHistogramSeriesLocked(c.accessHistSeries, labels, agg.LatencyHist, aggregation)
 	}
 }
 
 func (c *WorkloadWindowCollector) incrementRPCSeriesLocked(lane rpcLaneKey, uid, username, process, slurmJobID, aggregation string, agg rpcAggregate) {
 	labels := workloadRPCWaitLabelValues(lane.FSName, lane.MountPath, uid, username, process, lane.ActorType, slurmJobID, aggregation, c.slurmEnabled, c.uidEnabled)
 	if agg.Ops > 0 {
-		c.incrementCounterSeriesLocked(c.rpcOpsSeries, labels, agg.Ops)
+		c.incrementCounterSeriesLocked(c.rpcOpsSeries, labels, agg.Ops, aggregation)
 	}
 	if agg.LatencyHist.Count > 0 {
-		c.incrementHistogramSeriesLocked(c.rpcHistSeries, labels, agg.LatencyHist)
+		c.incrementHistogramSeriesLocked(c.rpcHistSeries, labels, agg.LatencyHist, aggregation)
 	}
 }
 
-func (c *WorkloadWindowCollector) incrementCounterSeriesLocked(store map[string]*counterSeries, labels []string, value float64) {
+func (c *WorkloadWindowCollector) hideAccessSeriesLocked(lane accessExportLane, uid, username, process, slurmJobID string) {
+	labels := workloadAccessLabelValues(lane.FSName, lane.MountPath, lane.Intent, uid, username, process, lane.ActorType, slurmJobID, aggregationIndividual, c.slurmEnabled, c.uidEnabled)
+	key := joinLabelKey(labels...)
+	if series, ok := c.accessOpsSeries[key]; ok {
+		series.Visible = false
+	}
+	if series, ok := c.dataBytesSeries[key]; ok {
+		series.Visible = false
+	}
+	if series, ok := c.accessHistSeries[key]; ok {
+		series.Visible = false
+	}
+}
+
+func (c *WorkloadWindowCollector) hideRPCSeriesLocked(lane rpcLaneKey, uid, username, process, slurmJobID string) {
+	labels := workloadRPCWaitLabelValues(lane.FSName, lane.MountPath, uid, username, process, lane.ActorType, slurmJobID, aggregationIndividual, c.slurmEnabled, c.uidEnabled)
+	key := joinLabelKey(labels...)
+	if series, ok := c.rpcOpsSeries[key]; ok {
+		series.Visible = false
+	}
+	if series, ok := c.rpcHistSeries[key]; ok {
+		series.Visible = false
+	}
+}
+
+func (c *WorkloadWindowCollector) incrementCounterSeriesLocked(store map[string]*counterSeries, labels []string, value float64, aggregation string) {
 	key := joinLabelKey(labels...)
 	series, ok := store[key]
 	if !ok {
@@ -720,9 +754,13 @@ func (c *WorkloadWindowCollector) incrementCounterSeriesLocked(store map[string]
 	}
 	series.Value += value
 	series.LastUpdatedTick = c.tick
+	series.Visible = aggregation != aggregationOther && aggregation != aggregationTotal
+	if aggregation == aggregationOther || aggregation == aggregationTotal {
+		series.Visible = true
+	}
 }
 
-func (c *WorkloadWindowCollector) incrementHistogramSeriesLocked(store map[string]*histogramSeries, labels []string, value histogramState) {
+func (c *WorkloadWindowCollector) incrementHistogramSeriesLocked(store map[string]*histogramSeries, labels []string, value histogramState, aggregation string) {
 	key := joinLabelKey(labels...)
 	series, ok := store[key]
 	if !ok {
@@ -731,6 +769,56 @@ func (c *WorkloadWindowCollector) incrementHistogramSeriesLocked(store map[strin
 	}
 	series.Value.Add(value)
 	series.LastUpdatedTick = c.tick
+	series.Visible = aggregation != aggregationOther && aggregation != aggregationTotal
+	if aggregation == aggregationOther || aggregation == aggregationTotal {
+		series.Visible = true
+	}
+}
+
+func (c *WorkloadWindowCollector) purgeExpiredLocked() {
+	if c.cfg.RetentionWindows == 0 {
+		return
+	}
+	c.purgeCounterStoreLocked(c.accessOpsSeries)
+	c.purgeCounterStoreLocked(c.dataBytesSeries)
+	c.purgeHistogramStoreLocked(c.accessHistSeries)
+	c.purgeCounterStoreLocked(c.rpcOpsSeries)
+	c.purgeHistogramStoreLocked(c.rpcHistSeries)
+
+	for key, state := range c.accessState {
+		if c.tick-state.LastSeenTick > c.cfg.RetentionWindows {
+			delete(c.accessState, key)
+		}
+	}
+	for key, state := range c.rpcState {
+		if c.tick-state.LastSeenTick > c.cfg.RetentionWindows {
+			delete(c.rpcState, key)
+		}
+	}
+}
+
+func (c *WorkloadWindowCollector) purgeCounterStoreLocked(store map[string]*counterSeries) {
+	for key, series := range store {
+		aggregation := series.Labels[len(series.Labels)-1]
+		if aggregation == aggregationOther || aggregation == aggregationTotal {
+			continue
+		}
+		if c.tick-series.LastUpdatedTick > c.cfg.RetentionWindows {
+			delete(store, key)
+		}
+	}
+}
+
+func (c *WorkloadWindowCollector) purgeHistogramStoreLocked(store map[string]*histogramSeries) {
+	for key, series := range store {
+		aggregation := series.Labels[len(series.Labels)-1]
+		if aggregation == aggregationOther || aggregation == aggregationTotal {
+			continue
+		}
+		if c.tick-series.LastUpdatedTick > c.cfg.RetentionWindows {
+			delete(store, key)
+		}
+	}
 }
 
 func (c *WorkloadWindowCollector) accessStateKey(key accessEntityIntentKey) string {

@@ -213,6 +213,43 @@ func TestWindowedWorkloadCollectorKeepsIndividualCountersVisibleOnly(t *testing.
 	}
 }
 
+func TestWindowedWorkloadCollectorPurgesHiddenSeriesAfterRetention(t *testing.T) {
+	t.Parallel()
+
+	collector := NewWorkloadWindowCollector(WorkloadFilterConfig{
+		TopN:             1,
+		PromoteWindows:   1,
+		DemoteWindows:    1,
+		RetentionWindows: 2,
+	}, nil, false, true)
+
+	hot := Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, Comm: "dd", DurationUS: 1000, SizeBytes: 64 * 1024 * 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"}
+	cold := Event{Plane: PlaneLLite, Op: OpWrite, UID: 1002, Comm: "cat", DurationUS: 1000, SizeBytes: 64 * 1024 * 1024, MountPath: "/mnt/lustre", FSName: "lustrefs"}
+
+	collector.ObserveAccess(hot, "1001", "testuser", ActorUser, "")
+	collector.ObserveAccess(cold, "1002", "unknown", ActorUser, "")
+	collector.RotateWindow()
+
+	// cat is hidden and should be purged after enough empty windows.
+	for i := 0; i < 3; i++ {
+		collector.RotateWindow()
+	}
+
+	collector.mu.RLock()
+	defer collector.mu.RUnlock()
+
+	catLabels := workloadAccessLabelValues("lustrefs", "/mnt/lustre", IntentDataWrite, "1002", "unknown", "cat", ActorUser, "", aggregationIndividual, false, true)
+	key := joinLabelKey(catLabels...)
+	if _, ok := collector.accessOpsSeries[key]; ok {
+		t.Fatal("expected hidden cat series to be purged after retention window")
+	}
+	if _, ok := collector.accessState[collector.accessStateKey(accessEntityIntentKey{
+		FSName: "lustrefs", MountPath: "/mnt/lustre", Intent: IntentDataWrite, UID: "1002", Username: "unknown", Process: "cat", ActorType: ActorUser,
+	})]; ok {
+		t.Fatal("expected hidden cat state to be purged after retention window")
+	}
+}
+
 func metricCounterValue(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string) float64 {
 	t.Helper()
 
