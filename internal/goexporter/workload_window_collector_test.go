@@ -73,34 +73,20 @@ func TestWindowedWorkloadCollectorRoutesLowShareActorToOther(t *testing.T) {
 		"actor_type":    ActorUser,
 		"aggregation":   "other",
 	}
-	totalLabels := map[string]string{
-		"fs":            "lustrefs",
-		"mount":         "/mnt/lustre",
-		"access_intent": IntentDataWrite,
-		"uid":           "_all",
-		"username":      "_all",
-		"process":       "_all",
-		"actor_type":    ActorUser,
-		"aggregation":   "total",
-	}
-
-	if got := metricCounterValue(t, families, "lustre_client_access_operations_total", ddLabels); got != 20 {
+	if got := metricCounterValue(t, families, "lustre_client_relevance_access_operations_total", ddLabels); got != 20 {
 		t.Fatalf("dd individual ops = %v, want 20", got)
 	}
-	if got := metricCounterValue(t, families, "lustre_client_access_operations_total", otherLabels); got != 1 {
+	if got := metricCounterValue(t, families, "lustre_client_relevance_access_operations_total", otherLabels); got != 1 {
 		t.Fatalf("other ops = %v, want 1", got)
 	}
-	if got := metricCounterValue(t, families, "lustre_client_access_operations_total", totalLabels); got != 21 {
-		t.Fatalf("total ops = %v, want 21", got)
-	}
-	if got := metricCounterValue(t, families, "lustre_client_data_bytes_total", ddLabels); got != 20*(4*1024*1024) {
+	if got := metricCounterValue(t, families, "lustre_client_relevance_data_bytes_total", ddLabels); got != 20*(4*1024*1024) {
 		t.Fatalf("dd bytes = %v, want %v", got, 20*(4*1024*1024))
 	}
-	if got := metricCounterValue(t, families, "lustre_client_data_bytes_total", otherLabels); got != 1*(1024*1024) {
+	if got := metricCounterValue(t, families, "lustre_client_relevance_data_bytes_total", otherLabels); got != 1*(1024*1024) {
 		t.Fatalf("other bytes = %v, want %v", got, 1*(1024*1024))
 	}
 
-	h := metricHistogram(t, families, "lustre_client_access_duration_seconds", ddLabels)
+	h := metricHistogram(t, families, "lustre_client_relevance_access_duration_seconds", ddLabels)
 	if got := h.GetSampleCount(); got != 20 {
 		t.Fatalf("dd histogram count = %d, want 20", got)
 	}
@@ -108,12 +94,12 @@ func TestWindowedWorkloadCollectorRoutesLowShareActorToOther(t *testing.T) {
 		t.Fatalf("dd histogram sum = %v, want %v", got, 20*0.001)
 	}
 
-	otherHist := metricHistogram(t, families, "lustre_client_access_duration_seconds", otherLabels)
+	otherHist := metricHistogram(t, families, "lustre_client_relevance_access_duration_seconds", otherLabels)
 	if got := otherHist.GetSampleCount(); got != 1 {
 		t.Fatalf("other histogram count = %d, want 1", got)
 	}
 
-	if metricExists(families, "lustre_client_access_operations_total", map[string]string{
+	if metricExists(families, "lustre_client_relevance_access_operations_total", map[string]string{
 		"fs":            "lustrefs",
 		"mount":         "/mnt/lustre",
 		"access_intent": IntentDataWrite,
@@ -208,7 +194,7 @@ func TestWindowedWorkloadCollectorKeepsIndividualCountersVisibleOnly(t *testing.
 		"actor_type":    ActorUser,
 		"aggregation":   "individual",
 	}
-	if got := metricCounterValue(t, families, "lustre_client_access_operations_total", catIndividual); got != 30 {
+	if got := metricCounterValue(t, families, "lustre_client_relevance_access_operations_total", catIndividual); got != 30 {
 		t.Fatalf("cat individual ops = %v, want 30", got)
 	}
 
@@ -222,7 +208,7 @@ func TestWindowedWorkloadCollectorKeepsIndividualCountersVisibleOnly(t *testing.
 		"actor_type":    ActorUser,
 		"aggregation":   "other",
 	}
-	if got := metricCounterValue(t, families, "lustre_client_access_operations_total", otherLabels); got != 1 {
+	if got := metricCounterValue(t, families, "lustre_client_relevance_access_operations_total", otherLabels); got != 1 {
 		t.Fatalf("other ops = %v, want 1", got)
 	}
 }

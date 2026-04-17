@@ -246,11 +246,11 @@ func NewWorkloadWindowCollector(cfg WorkloadFilterConfig, processFilter *Process
 		processFilter:     processFilter,
 		slurmEnabled:      slurmEnabled,
 		uidEnabled:        uidEnabled,
-		accessOpsDesc:     prometheus.NewDesc("lustre_client_access_operations_total", "Aggregated llite access operation count routed by relevance", buildWorkloadAccessLabels(slurmEnabled, uidEnabled), nil),
-		dataBytesDesc:     prometheus.NewDesc("lustre_client_data_bytes_total", "Aggregated llite data volume in bytes routed by relevance", buildWorkloadAccessLabels(slurmEnabled, uidEnabled), nil),
-		accessLatencyDesc: prometheus.NewDesc("lustre_client_access_duration_seconds", "Aggregated llite access latency in seconds routed by relevance", buildWorkloadAccessLabels(slurmEnabled, uidEnabled), nil),
-		rpcWaitOpsDesc:    prometheus.NewDesc("lustre_client_rpc_wait_operations_total", "Aggregated ptlrpc queue wait count routed by relevance", buildWorkloadRPCWaitLabels(slurmEnabled, uidEnabled), nil),
-		rpcWaitLatDesc:    prometheus.NewDesc("lustre_client_rpc_wait_duration_seconds", "Aggregated ptlrpc queue wait latency in seconds routed by relevance", buildWorkloadRPCWaitLabels(slurmEnabled, uidEnabled), nil),
+		accessOpsDesc:     prometheus.NewDesc("lustre_client_relevance_access_operations_total", "Relevance-routed llite access operation count", buildWorkloadAccessLabels(slurmEnabled, uidEnabled), nil),
+		dataBytesDesc:     prometheus.NewDesc("lustre_client_relevance_data_bytes_total", "Relevance-routed llite data volume in bytes", buildWorkloadAccessLabels(slurmEnabled, uidEnabled), nil),
+		accessLatencyDesc: prometheus.NewDesc("lustre_client_relevance_access_duration_seconds", "Relevance-routed llite access latency in seconds", buildWorkloadAccessLabels(slurmEnabled, uidEnabled), nil),
+		rpcWaitOpsDesc:    prometheus.NewDesc("lustre_client_relevance_rpc_wait_operations_total", "Relevance-routed ptlrpc queue wait count", buildWorkloadRPCWaitLabels(slurmEnabled, uidEnabled), nil),
+		rpcWaitLatDesc:    prometheus.NewDesc("lustre_client_relevance_rpc_wait_duration_seconds", "Relevance-routed ptlrpc queue wait latency in seconds", buildWorkloadRPCWaitLabels(slurmEnabled, uidEnabled), nil),
 		currentAccess:     map[accessEntityOpKey]*accessAggregate{},
 		currentRPC:        map[rpcEntityKey]*rpcAggregate{},
 		accessState:       map[string]entityVisibility{},
@@ -486,9 +486,7 @@ func (c *WorkloadWindowCollector) rotateAccessLocked() {
 		otherByLane[exportLane] = other
 	}
 
-	for lane, total := range totalByLane {
-		c.incrementAccessSeriesLocked(lane, aggregateIdentityTotal, aggregateIdentityTotal, aggregateIdentityTotal, aggregateIdentityTotal, aggregationTotal, total)
-
+	for lane := range totalByLane {
 		visible := visibleByLane[lane]
 		if len(visible) > 0 {
 			sort.Slice(visible, func(i, j int) bool {
@@ -564,9 +562,7 @@ func (c *WorkloadWindowCollector) rotateRPCLocked() {
 		otherByLane[laneKey] = other
 	}
 
-	for lane, total := range totalByLane {
-		c.incrementRPCSeriesLocked(lane, aggregateIdentityTotal, aggregateIdentityTotal, aggregateIdentityTotal, aggregateIdentityTotal, aggregationTotal, total)
-
+	for lane := range totalByLane {
 		visible := visibleByLane[lane]
 		sort.Slice(visible, func(i, j int) bool {
 			if visible[i].Score != visible[j].Score {

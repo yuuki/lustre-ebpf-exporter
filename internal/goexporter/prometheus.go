@@ -106,6 +106,8 @@ type PrometheusExporter struct {
 	SlurmEnabled bool
 	UIDEnabled   bool
 
+	AccessLatency     *prometheus.HistogramVec
+	RPCWaitLat        *prometheus.HistogramVec
 	Inflight          *prometheus.GaugeVec
 	RequestsStarted   *prometheus.CounterVec
 	RequestsCompleted *prometheus.CounterVec
@@ -127,6 +129,14 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 		PCCEnabled:   pccEnabled,
 		SlurmEnabled: slurmEnabled,
 		UIDEnabled:   uidEnabled,
+		AccessLatency: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
+			buildLliteLabels(slurmEnabled, uidEnabled),
+		),
+		RPCWaitLat: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
+			buildPtlrpcLabels(slurmEnabled, uidEnabled),
+		),
 		Inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
 			buildBaseLabels(slurmEnabled, uidEnabled),
@@ -149,7 +159,7 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 	}
 
 	collectors := []prometheus.Collector{
-		exporter.WorkloadCollector, exporter.Inflight,
+		exporter.AccessLatency, exporter.RPCWaitLat, exporter.WorkloadCollector, exporter.Inflight,
 		exporter.RequestsStarted, exporter.RequestsCompleted,
 	}
 

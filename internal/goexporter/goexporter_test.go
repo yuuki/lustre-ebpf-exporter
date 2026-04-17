@@ -495,8 +495,8 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	if !strings.Contains(text, "mount=\"/mnt/lustre\"") {
 		t.Fatalf("missing mount label: %s", text)
 	}
-	if !strings.Contains(text, `aggregation="total"`) {
-		t.Fatalf("missing aggregation label: %s", text)
+	if !strings.Contains(text, `lustre_client_relevance_access_duration_seconds_bucket`) {
+		t.Fatalf("missing relevance histogram family: %s", text)
 	}
 }
 

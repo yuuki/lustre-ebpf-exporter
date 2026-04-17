@@ -45,13 +45,14 @@ func Run(ctx context.Context, cfg Config) error {
 	procNameResolver := NewProcNameResolver()
 	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessNameStripSuffix)
 
-	_, _ = source.CounterMaps()
+	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
 	var pccMap, pccErrorMap *ebpf.Map
 	if cfg.PCCEnabled {
 		pccMap, pccErrorMap = source.PccCounterMaps()
 	}
-	counterCollector := NewBPFCounterCollector(nil, nil, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
+	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
 	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 	if err != nil {
@@ -121,6 +122,11 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 			return
 		}
 		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
+		if event.DurationUS > 0 {
+			exporter.AccessLatency.WithLabelValues(
+				lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
+			).Observe(float64(event.DurationUS) / 1_000_000.0)
+		}
 		exporter.WorkloadCollector.ObserveAccess(event, uid, username, actorType, slurmJobID)
 		return
 	}
@@ -139,6 +145,11 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 
 	if event.Op == OpQueueWait {
 		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
+		if event.DurationUS > 0 {
+			exporter.RPCWaitLat.WithLabelValues(
+				ptlrpcLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
+			).Observe(float64(event.DurationUS) / 1_000_000.0)
+		}
 		exporter.WorkloadCollector.ObserveRPCWait(event, uid, username, actorType, slurmJobID)
 		return
 	}
