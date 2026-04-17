@@ -14,28 +14,68 @@ import (
 	"github.com/prometheus/common/expfmt"
 )
 
-var (
-	baseLabels      = []string{"fs", "mount", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	ptlrpcLabels    = []string{"fs", "mount", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	lliteLabels     = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	lliteErrLabels  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"}
-	rpcErrorLabels  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type", "slurm_job_id"}
-	pccAttachLabels = []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type", "slurm_job_id"}
-
-	baseLabelsNoSlurm      = []string{"fs", "mount", "uid", "username", "process", "actor_type"}
-	ptlrpcLabelsNoSlurm    = []string{"fs", "mount", "op", "uid", "username", "process", "actor_type"}
-	lliteLabelsNoSlurm     = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type"}
-	lliteErrLabelsNoSlurm  = []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "errno_class"}
-	rpcErrorLabelsNoSlurm  = []string{"fs", "mount", "event", "uid", "username", "process", "actor_type"}
-	pccAttachLabelsNoSlurm = []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type"}
-)
-
-// pickLabels returns with if slurmEnabled, otherwise without.
-func pickLabels(slurmEnabled bool, with, without []string) []string {
-	if slurmEnabled {
-		return with
+// Label schemas are composed from three positional groups:
+//
+//  1. A kind-specific prefix (e.g. "fs", "mount", "access_intent", "op").
+//  2. Optional per-UID identity ("uid", "username") when uidEnabled is true.
+//  3. The common "process", "actor_type" pair, optionally followed by
+//     "slurm_job_id" when slurmEnabled is true, and a kind-specific trailing
+//     slot (e.g. "errno_class").
+//
+// Each metric family has a dedicated builder so call sites read naturally
+// and the schema-shaping logic is centralized.
+func appendUIDLabels(dst []string, uidEnabled bool) []string {
+	if uidEnabled {
+		return append(dst, "uid", "username")
 	}
-	return without
+	return dst
+}
+
+func appendSlurmLabel(dst []string, slurmEnabled bool) []string {
+	if slurmEnabled {
+		return append(dst, "slurm_job_id")
+	}
+	return dst
+}
+
+func buildBaseLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	return appendSlurmLabel(labels, slurmEnabled)
+}
+
+func buildPtlrpcLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount", "op"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	return appendSlurmLabel(labels, slurmEnabled)
+}
+
+func buildLliteLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount", "access_intent", "op"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	return appendSlurmLabel(labels, slurmEnabled)
+}
+
+func buildLliteErrLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := buildLliteLabels(slurmEnabled, uidEnabled)
+	return append(labels, "errno_class")
+}
+
+func buildRPCErrorLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount", "event"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	return appendSlurmLabel(labels, slurmEnabled)
+}
+
+func buildPCCAttachLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount", "mode", "trigger"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	return appendSlurmLabel(labels, slurmEnabled)
 }
 
 // PrometheusExporter serves Prometheus metrics via HTTP.
@@ -46,8 +86,9 @@ type PrometheusExporter struct {
 	server   *http.Server
 	listener net.Listener
 
-	PCCEnabled  bool
+	PCCEnabled   bool
 	SlurmEnabled bool
+	UIDEnabled   bool
 
 	AccessLatency     *prometheus.HistogramVec
 	RPCWaitLat        *prometheus.HistogramVec
@@ -63,37 +104,38 @@ type PrometheusExporter struct {
 	PCCInvalidationsTotal  *prometheus.CounterVec
 }
 
-func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool, slurmEnabled bool) (*PrometheusExporter, error) {
+func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool, slurmEnabled bool, uidEnabled bool) (*PrometheusExporter, error) {
 	registry := prometheus.NewRegistry()
 	exporter := &PrometheusExporter{
 		registry:     registry,
 		PCCEnabled:   pccEnabled,
 		SlurmEnabled: slurmEnabled,
+		UIDEnabled:   uidEnabled,
 		AccessLatency: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm),
+			buildLliteLabels(slurmEnabled, uidEnabled),
 		),
 		RPCWaitLat: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			pickLabels(slurmEnabled,ptlrpcLabels, ptlrpcLabelsNoSlurm),
+			buildPtlrpcLabels(slurmEnabled, uidEnabled),
 		),
 		Inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
-			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
+			buildBaseLabels(slurmEnabled, uidEnabled),
 		),
 		RequestsStarted: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_ptlrpc_requests_started_total",
 				Help: "Total ptlrpc requests sent (ptlrpc_send_new_req events)",
 			},
-			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
+			buildBaseLabels(slurmEnabled, uidEnabled),
 		),
 		RequestsCompleted: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_ptlrpc_requests_completed_total",
 				Help: "Total ptlrpc requests freed (__ptlrpc_free_req events)",
 			},
-			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
+			buildBaseLabels(slurmEnabled, uidEnabled),
 		),
 	}
 
@@ -109,35 +151,35 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 				Help:    "PCC I/O operation latency in seconds",
 				Buckets: PrometheusLatencyBucketsSeconds,
 			},
-			pickLabels(slurmEnabled,lliteLabels, lliteLabelsNoSlurm),
+			buildLliteLabels(slurmEnabled, uidEnabled),
 		)
 		exporter.PCCAttachTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_attach_total",
 				Help: "Total PCC attach attempts",
 			},
-			pickLabels(slurmEnabled,pccAttachLabels, pccAttachLabelsNoSlurm),
+			buildPCCAttachLabels(slurmEnabled, uidEnabled),
 		)
 		exporter.PCCAttachFailuresTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_attach_failures_total",
 				Help: "Total PCC attach failures",
 			},
-			pickLabels(slurmEnabled,pccAttachLabels, pccAttachLabelsNoSlurm),
+			buildPCCAttachLabels(slurmEnabled, uidEnabled),
 		)
 		exporter.PCCDetachTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_detach_total",
 				Help: "Total PCC detach operations",
 			},
-			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
+			buildBaseLabels(slurmEnabled, uidEnabled),
 		)
 		exporter.PCCInvalidationsTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "lustre_client_pcc_layout_invalidations_total",
 				Help: "Total PCC layout invalidation events",
 			},
-			pickLabels(slurmEnabled,baseLabels, baseLabelsNoSlurm),
+			buildBaseLabels(slurmEnabled, uidEnabled),
 		)
 		collectors = append(collectors,
 			exporter.PCCLatency,

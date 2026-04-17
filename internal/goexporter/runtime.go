@@ -52,16 +52,16 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.PCCEnabled {
 		pccMap, pccErrorMap = source.PccCounterMaps()
 	}
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
-	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled, cfg.SlurmJobIDEnabled)
+	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 	if err != nil {
 		return err
 	}
 	defer exporter.Shutdown(context.Background())
 
-	inflightTracker := NewInflightTracker(exporter.Inflight, cfg.SlurmJobIDEnabled)
+	inflightTracker := NewInflightTracker(exporter.Inflight, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
@@ -116,9 +116,9 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 		if intent == "" || event.DurationUS == 0 {
 			return
 		}
-		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
+		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
 		exporter.AccessLatency.WithLabelValues(
-			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)...,
+			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
 		).Observe(float64(event.DurationUS) / 1_000_000.0)
 		return
 	}
@@ -137,9 +137,9 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 
 	if event.Op == OpQueueWait {
 		if event.DurationUS > 0 {
-			uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
+			uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
 			exporter.RPCWaitLat.WithLabelValues(
-				ptlrpcLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)...,
+				ptlrpcLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
 			).Observe(float64(event.DurationUS) / 1_000_000.0)
 		}
 		return
@@ -155,14 +155,14 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 	default:
 		return
 	}
-	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
-	labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled)
+	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
+	labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
 	counter.WithLabelValues(labels...).Inc()
 	inflight.Update(delta, event, uid, username, actorType, slurmJobID)
 }
 
 func processPCCEvent(event Event, rawComm string, exporter *PrometheusExporter, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
-	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver)
+	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
 
 	switch event.Op {
 	case OpRead, OpWrite, OpOpen, OpLookup, OpFsync:
@@ -172,23 +172,23 @@ func processPCCEvent(event Event, rawComm string, exporter *PrometheusExporter, 
 			return
 		}
 		exporter.PCCLatency.WithLabelValues(
-			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)...,
+			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
 		).Observe(float64(event.DurationUS) / 1_000_000.0)
 
 	case OpPCCAttach:
 		mode, trigger := DecodePCCAttachInfo(event.RequestPtr)
-		attachVals := pccAttachLabelValues(event.FSName, event.MountPath, mode, trigger, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled)
+		attachVals := pccAttachLabelValues(event.FSName, event.MountPath, mode, trigger, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
 		exporter.PCCAttachTotal.WithLabelValues(attachVals...).Inc()
 		if event.ErrnoClass != "" {
 			exporter.PCCAttachFailuresTotal.WithLabelValues(attachVals...).Inc()
 		}
 
 	case OpPCCDetach:
-		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled)
+		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
 		exporter.PCCDetachTotal.WithLabelValues(labels...).Inc()
 
 	case OpPCCInvalidate:
-		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled)
+		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
 		exporter.PCCInvalidationsTotal.WithLabelValues(labels...).Inc()
 	}
 }
@@ -196,10 +196,14 @@ func processPCCEvent(event Event, rawComm string, exporter *PrometheusExporter, 
 // resolveEventIdentity resolves identity labels for an event. rawComm is
 // the original process name before normalization; it is used for actor-type
 // classification so that processes collapsed to "other" by the process
-// filter retain their correct actor type.
-func resolveEventIdentity(event Event, rawComm string, resolver *UsernameResolver, slurmResolver *slurm.Resolver) (uid, username, actorType, slurmJobID string) {
-	uid = strconv.FormatUint(uint64(event.UID), 10)
-	username = resolver.Resolve(event.UID)
+// filter retain their correct actor type. When uidEnabled is false the
+// kernel already zeroes event.UID and we skip the UsernameResolver lookup
+// so the hot path avoids touching the getpwuid cache entirely.
+func resolveEventIdentity(event Event, rawComm string, resolver *UsernameResolver, slurmResolver *slurm.Resolver, uidEnabled bool) (uid, username, actorType, slurmJobID string) {
+	if uidEnabled {
+		uid = strconv.FormatUint(uint64(event.UID), 10)
+		username = resolver.Resolve(event.UID)
+	}
 	actorType = ClassifyActorType(rawComm)
 	slurmJobID = slurmResolver.Resolve(event.PID).JobID
 	return
