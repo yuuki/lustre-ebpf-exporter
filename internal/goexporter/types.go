@@ -264,14 +264,14 @@ var (
 		OpMkdir: IntentNamespaceMutation, OpRmdir: IntentNamespaceMutation,
 		OpMknod: IntentNamespaceMutation, OpSetattr: IntentNamespaceMutation,
 		OpSetxattr: IntentNamespaceMutation,
-		OpRead:  IntentDataRead, OpWrite: IntentDataWrite,
+		OpRead:     IntentDataRead, OpWrite: IntentDataWrite,
 		OpFsync: IntentSync,
 		// PCC lifecycle ops.
 		OpPCCAttach: IntentNamespaceMutation, OpPCCDetach: IntentNamespaceMutation,
 		OpPCCInvalidate: IntentNamespaceMutation,
 	}
 	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
-	DaemonNames = map[string]struct{}{
+	DaemonNames      = map[string]struct{}{
 		"node_exporter":   {},
 		"sshd":            {},
 		"systemd":         {},
@@ -338,6 +338,11 @@ type Config struct {
 	// from every metric (they're paired because a constant-zero uid would
 	// otherwise resolve to a single username for every row).
 	UIDLabelsEnabled bool
+
+	// HistogramProcessLabelsEnabled controls whether histogram metric
+	// families retain the process label. Default false to reduce
+	// bucket-cardinality explosion.
+	HistogramProcessLabelsEnabled bool
 }
 
 type Event struct {

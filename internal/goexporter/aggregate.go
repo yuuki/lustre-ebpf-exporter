@@ -68,6 +68,13 @@ func appendSlurmValue(dst []string, slurmJobID string, slurmEnabled bool) []stri
 	return dst
 }
 
+func appendProcessValue(dst []string, process string, processEnabled bool) []string {
+	if processEnabled {
+		return append(dst, process)
+	}
+	return dst
+}
+
 // baseLabelValues returns label values matching buildBaseLabels(slurmEnabled, uidEnabled).
 // Centralizing this prevents drift between the gauge, counters, and any
 // future metric that shares the base label schema.
@@ -85,10 +92,26 @@ func lliteLabelValues(fsName, mountPath, intent, op, uid, username, comm, actorT
 	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
 }
 
+func lliteHistogramLabelValues(fsName, mountPath, intent, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled, processEnabled bool) []string {
+	vals := []string{fsName, mountPath, intent, op}
+	vals = appendUIDValues(vals, uid, username, uidEnabled)
+	vals = appendProcessValue(vals, comm, processEnabled)
+	vals = append(vals, actorType)
+	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
+}
+
 func ptlrpcLabelValues(fsName, mountPath, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled bool) []string {
 	vals := []string{fsName, mountPath, op}
 	vals = appendUIDValues(vals, uid, username, uidEnabled)
 	vals = append(vals, comm, actorType)
+	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
+}
+
+func ptlrpcHistogramLabelValues(fsName, mountPath, op, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled, processEnabled bool) []string {
+	vals := []string{fsName, mountPath, op}
+	vals = appendUIDValues(vals, uid, username, uidEnabled)
+	vals = appendProcessValue(vals, comm, processEnabled)
+	vals = append(vals, actorType)
 	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
 }
 
@@ -123,4 +146,3 @@ func joinLabelKey(parts ...string) string {
 	}
 	return b.String()
 }
-
