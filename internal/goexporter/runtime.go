@@ -72,7 +72,11 @@ func Run(ctx context.Context, cfg Config) error {
 		durationTimer = timer.C
 	}
 
-	windowTicker := time.NewTicker(cfg.DrainInterval)
+	windowInterval := cfg.WorkloadWindowInterval
+	if windowInterval <= 0 {
+		windowInterval = 30 * time.Second
+	}
+	windowTicker := time.NewTicker(windowInterval)
 	defer windowTicker.Stop()
 
 	for {

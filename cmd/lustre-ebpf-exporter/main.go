@@ -30,6 +30,7 @@ func (m *mountPathsFlag) Set(value string) error {
 func main() {
 	cfg := goexporter.Config{}
 	var drainIntervalSeconds int
+	var workloadWindowSeconds int
 	var durationSeconds int
 	var mounts mountPathsFlag
 	var slurmTTLSeconds int
@@ -39,6 +40,7 @@ func main() {
 
 	flag.Var(&mounts, "mount", "Lustre client mount path (can be specified multiple times)")
 	flag.IntVar(&drainIntervalSeconds, "drain-interval", 5, "BPF counter map drain interval in seconds")
+	flag.IntVar(&workloadWindowSeconds, "workload-window-seconds", 30, "Relevance aggregation window in seconds for contribution-based workload metrics")
 	flag.IntVar(&durationSeconds, "duration", 0, "Stop after the given duration in seconds; 0 means run until interrupted")
 	flag.BoolVar(&cfg.Once, "once", false, "Drain counters once and exit")
 	flag.BoolVar(
@@ -88,10 +90,14 @@ func main() {
 	if drainIntervalSeconds <= 0 {
 		log.Fatal("--drain-interval must be greater than zero")
 	}
+	if workloadWindowSeconds <= 0 {
+		log.Fatal("--workload-window-seconds must be greater than zero")
+	}
 	if durationSeconds < 0 {
 		log.Fatal("--duration must be greater than or equal to zero")
 	}
 	cfg.DrainInterval = time.Duration(drainIntervalSeconds) * time.Second
+	cfg.WorkloadWindowInterval = time.Duration(workloadWindowSeconds) * time.Second
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
 
 	if slurmTTLSeconds <= 0 {
@@ -122,6 +128,7 @@ func main() {
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
 	log.Printf("BPF counter drain interval: %s", cfg.DrainInterval)
+	log.Printf("Workload relevance window: %s", cfg.WorkloadWindowInterval)
 	if cfg.SlurmJobIDEnabled {
 		log.Printf("Slurm job id resolution: enabled (ttl=%s negative_ttl=%s verify_ttl=%s cache_size=%d)",
 			cfg.SlurmJobIDTTL, cfg.SlurmJobIDNegativeTTL, cfg.SlurmJobIDVerifyTTL, cfg.SlurmJobIDCacheSize)

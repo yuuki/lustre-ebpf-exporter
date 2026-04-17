@@ -290,6 +290,7 @@ var (
 type Config struct {
 	MountPaths               []string
 	DrainInterval            time.Duration
+	WorkloadWindowInterval   time.Duration
 	Duration                 time.Duration
 	Once                     bool
 	LegacySymbolAllowMissing bool
