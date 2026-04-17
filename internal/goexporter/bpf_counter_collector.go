@@ -55,15 +55,9 @@ type BPFCounterCollector struct {
 	pccMap      *ebpf.Map
 	pccErrorMap *ebpf.Map
 	pccAcc      map[string]*lliteAccum      // reuses lliteAccum shape (9 labels)
-	pccErrorAcc map[string]*lliteErrorAccum  // reuses lliteErrorAccum shape (10 labels)
+	pccErrorAcc map[string]*lliteErrorAccum // reuses lliteErrorAccum shape (10 labels)
 
 	processFilter *ProcessFilter
-
-	// processOps tracks ops per process name (suffix-stripped when enabled)
-	// observed in the current drain cycle. Reset each drain so the
-	// tail-trim ranking reflects recent activity, not lifetime totals,
-	// and to prevent unbounded growth from short-lived process names.
-	processOps map[string]float64
 
 	accessOpsDesc    *prometheus.Desc
 	dataBytesDesc    *prometheus.Desc
@@ -110,28 +104,12 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 		slurmEnabled:  slurmEnabled,
 		uidEnabled:    uidEnabled,
 		processFilter: processFilter,
-		processOps:    map[string]float64{},
 		lliteAcc:      map[string]*lliteAccum{},
 		rpcAcc:        map[string]*rpcAccum{},
 		lliteErrorAcc: map[string]*lliteErrorAccum{},
 		rpcErrorAcc:   map[string]*rpcErrorAccum{},
 		pccAcc:        map[string]*lliteAccum{},
 		pccErrorAcc:   map[string]*lliteErrorAccum{},
-		accessOpsDesc: prometheus.NewDesc(
-			"lustre_client_access_operations_total",
-			"Aggregated llite access operation count",
-			buildLliteLabels(slurmEnabled, uidEnabled), nil,
-		),
-		dataBytesDesc: prometheus.NewDesc(
-			"lustre_client_data_bytes_total",
-			"Aggregated llite data volume in bytes",
-			buildLliteLabels(slurmEnabled, uidEnabled), nil,
-		),
-		rpcWaitOpsDesc: prometheus.NewDesc(
-			"lustre_client_rpc_wait_operations_total",
-			"Aggregated ptlrpc queue wait count",
-			buildPtlrpcLabels(slurmEnabled, uidEnabled), nil,
-		),
 		accessErrorsDesc: prometheus.NewDesc(
 			"lustre_client_operation_errors_total",
 			"Aggregated llite operation error count by errno class",
@@ -142,6 +120,25 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 			"Aggregated ptlrpc error/recovery event count",
 			buildRPCErrorLabels(slurmEnabled, uidEnabled), nil,
 		),
+	}
+	if lliteMap != nil {
+		c.accessOpsDesc = prometheus.NewDesc(
+			"lustre_client_access_operations_total",
+			"Aggregated llite access operation count",
+			buildLliteLabels(slurmEnabled, uidEnabled), nil,
+		)
+		c.dataBytesDesc = prometheus.NewDesc(
+			"lustre_client_data_bytes_total",
+			"Aggregated llite data volume in bytes",
+			buildLliteLabels(slurmEnabled, uidEnabled), nil,
+		)
+	}
+	if rpcMap != nil {
+		c.rpcWaitOpsDesc = prometheus.NewDesc(
+			"lustre_client_rpc_wait_operations_total",
+			"Aggregated ptlrpc queue wait count",
+			buildPtlrpcLabels(slurmEnabled, uidEnabled), nil,
+		)
 	}
 	if pccMap != nil {
 		c.pccOpsDesc = prometheus.NewDesc(
@@ -165,11 +162,19 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap
 
 // Describe implements prometheus.Collector.
 func (c *BPFCounterCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.accessOpsDesc
-	ch <- c.dataBytesDesc
-	ch <- c.rpcWaitOpsDesc
-	ch <- c.accessErrorsDesc
-	ch <- c.rpcErrorsDesc
+	if c.accessOpsDesc != nil {
+		ch <- c.accessOpsDesc
+		ch <- c.dataBytesDesc
+	}
+	if c.rpcWaitOpsDesc != nil {
+		ch <- c.rpcWaitOpsDesc
+	}
+	if c.accessErrorsDesc != nil {
+		ch <- c.accessErrorsDesc
+	}
+	if c.rpcErrorsDesc != nil {
+		ch <- c.rpcErrorsDesc
+	}
 	if c.pccOpsDesc != nil {
 		ch <- c.pccOpsDesc
 		ch <- c.pccBytesDesc
@@ -183,6 +188,9 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 	defer c.mu.RUnlock()
 
 	for _, acc := range c.lliteAcc {
+		if c.accessOpsDesc == nil || c.dataBytesDesc == nil {
+			break
+		}
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.accessOpsDesc, prometheus.CounterValue, acc.opsCount,
@@ -197,6 +205,9 @@ func (c *BPFCounterCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 	for _, acc := range c.rpcAcc {
+		if c.rpcWaitOpsDesc == nil {
+			break
+		}
 		if acc.opsCount > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				c.rpcWaitOpsDesc, prometheus.CounterValue, acc.opsCount,
@@ -263,24 +274,9 @@ func (c *BPFCounterCollector) StartDrain(ctx context.Context, interval time.Dura
 	}()
 }
 
-// DrainOnce reads both BPF counter maps, accumulates values, and updates
-// the dynamic tail-trim set. The trim set is updated BEFORE draining so
-// that the current drain's labels reflect the latest ranking, not the
-// previous cycle's.
 func (c *BPFCounterCollector) DrainOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	// Update trim set from the PREVIOUS drain's per-process ops before
-	// labeling the current drain. This eliminates the off-by-one where
-	// newly trimmed processes would only appear as "other" one drain late.
-	if c.processFilter.ShouldUpdateTrimSet() {
-		c.processFilter.UpdateTrimSet(c.opsPerProcess())
-	}
-
-	// Reset per-cycle ops so the trim ranking reflects only the latest
-	// drain window, preventing unbounded growth from short-lived processes.
-	c.processOps = make(map[string]float64, len(c.processOps))
 
 	if c.lliteMap != nil {
 		c.drainLLite(c.lliteMap)
@@ -300,12 +296,6 @@ func (c *BPFCounterCollector) DrainOnce() {
 	if c.pccErrorMap != nil {
 		c.drainPCCErrors(c.pccErrorMap)
 	}
-}
-
-// opsPerProcess returns ops per raw (pre-normalization) process name
-// observed in the current drain cycle, suitable for tail-trim ranking.
-func (c *BPFCounterCollector) opsPerProcess() map[string]float64 {
-	return c.processOps
 }
 
 // drainCounterMap iterates a BPF counter map, invokes onEntry for each
@@ -505,11 +495,8 @@ func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
 // and returns the filtered process name.
 func (c *BPFCounterCollector) normalizeProcess(comm [16]byte, opsCount uint64) string {
 	raw := sanitizeComm(comm[:])
-	// Use the suffix-stripped name as the ops accumulation key so that
-	// UpdateTrimSet and Normalize operate on the same names.
-	stripped := c.processFilter.StripName(raw)
-	if opsCount > 0 {
-		c.processOps[stripped] += float64(opsCount)
+	if c.processFilter == nil {
+		return raw
 	}
 	return c.processFilter.Normalize(raw)
 }

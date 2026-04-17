@@ -78,6 +78,22 @@ func buildPCCAttachLabels(slurmEnabled, uidEnabled bool) []string {
 	return appendSlurmLabel(labels, slurmEnabled)
 }
 
+func buildWorkloadAccessLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount", "access_intent"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	labels = appendSlurmLabel(labels, slurmEnabled)
+	return append(labels, "aggregation")
+}
+
+func buildWorkloadRPCWaitLabels(slurmEnabled, uidEnabled bool) []string {
+	labels := []string{"fs", "mount"}
+	labels = appendUIDLabels(labels, uidEnabled)
+	labels = append(labels, "process", "actor_type")
+	labels = appendSlurmLabel(labels, slurmEnabled)
+	return append(labels, "aggregation")
+}
+
 // PrometheusExporter serves Prometheus metrics via HTTP.
 // Histograms and gauges are updated directly; counters are provided
 // by the BPFCounterCollector custom Collector.
@@ -90,11 +106,10 @@ type PrometheusExporter struct {
 	SlurmEnabled bool
 	UIDEnabled   bool
 
-	AccessLatency     *prometheus.HistogramVec
-	RPCWaitLat        *prometheus.HistogramVec
 	Inflight          *prometheus.GaugeVec
 	RequestsStarted   *prometheus.CounterVec
 	RequestsCompleted *prometheus.CounterVec
+	WorkloadCollector *WorkloadWindowCollector
 
 	// PCC metrics (nil when PCCEnabled is false)
 	PCCLatency             *prometheus.HistogramVec
@@ -106,19 +121,12 @@ type PrometheusExporter struct {
 
 func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool, slurmEnabled bool, uidEnabled bool) (*PrometheusExporter, error) {
 	registry := prometheus.NewRegistry()
+	workloadCollector := NewWorkloadWindowCollector(DefaultWorkloadFilterConfig(), nil, slurmEnabled, uidEnabled)
 	exporter := &PrometheusExporter{
 		registry:     registry,
 		PCCEnabled:   pccEnabled,
 		SlurmEnabled: slurmEnabled,
 		UIDEnabled:   uidEnabled,
-		AccessLatency: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{Name: "lustre_client_access_duration_seconds", Help: "Aggregated llite access latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			buildLliteLabels(slurmEnabled, uidEnabled),
-		),
-		RPCWaitLat: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
-			buildPtlrpcLabels(slurmEnabled, uidEnabled),
-		),
 		Inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
 			buildBaseLabels(slurmEnabled, uidEnabled),
@@ -137,10 +145,11 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 			},
 			buildBaseLabels(slurmEnabled, uidEnabled),
 		),
+		WorkloadCollector: workloadCollector,
 	}
 
 	collectors := []prometheus.Collector{
-		exporter.AccessLatency, exporter.RPCWaitLat, exporter.Inflight,
+		exporter.WorkloadCollector, exporter.Inflight,
 		exporter.RequestsStarted, exporter.RequestsCompleted,
 	}
 
@@ -207,6 +216,18 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 	}()
 	log.Printf("Listening on %s, metrics at %s", listener.Addr(), telemetryPath)
 	return exporter, nil
+}
+
+func (e *PrometheusExporter) SetProcessFilter(filter *ProcessFilter) {
+	if e.WorkloadCollector != nil {
+		e.WorkloadCollector.SetProcessFilter(filter)
+	}
+}
+
+func (e *PrometheusExporter) FlushWorkloadWindow() {
+	if e.WorkloadCollector != nil {
+		e.WorkloadCollector.RotateWindow()
+	}
 }
 
 func (e *PrometheusExporter) Shutdown(ctx context.Context) error {

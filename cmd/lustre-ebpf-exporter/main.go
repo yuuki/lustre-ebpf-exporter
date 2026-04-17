@@ -61,9 +61,7 @@ func main() {
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
 	flag.BoolVar(&cfg.PCCEnabled, "collector.pcc", false, "Enable PCC (Persistent Client Cache) metrics collection")
 	flag.BoolVar(&cfg.UIDLabelsEnabled, "uid-labels", true, "Emit uid/username labels and key BPF counter maps per-UID; set to false to drop both labels and skip kernel-side bpf_get_current_uid_gid collection so PERCPU_HASH rows fold across users")
-	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\". Takes priority over --process-tail-trim-percent")
-	flag.Float64Var(&cfg.ProcessTailTrimPercent, "process-tail-trim-percent", 0, "Dynamically trim the bottom N% of processes by operation count each drain interval (0 to disable)")
-	flag.IntVar(&cfg.ProcessTailTrimHysteresis, "process-tail-trim-hysteresis", 1, "Consecutive drain cycles a process must be in the trim set before actually trimming")
+	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to keep individually as an operator override")
 	flag.BoolVar(&cfg.ProcessNameStripSuffix, "process-name-strip-suffix", false, "Strip trailing separator+digits from process names (e.g. \"Bun Pool 1\" → \"Bun Pool\") to reduce label cardinality")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
@@ -120,12 +118,6 @@ func main() {
 			}
 		}
 	}
-	if cfg.ProcessTailTrimPercent < 0 || cfg.ProcessTailTrimPercent > 100 {
-		log.Fatal("--process-tail-trim-percent must be between 0 and 100")
-	}
-	if cfg.ProcessTailTrimHysteresis < 1 {
-		log.Fatal("--process-tail-trim-hysteresis must be at least 1")
-	}
 
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
@@ -150,9 +142,7 @@ func main() {
 		log.Printf("Process name suffix stripping: enabled")
 	}
 	if len(cfg.ProcessAllowlist) > 0 {
-		log.Printf("Process allowlist: %s (all others become \"other\")", strings.Join(cfg.ProcessAllowlist, ", "))
-	} else if cfg.ProcessTailTrimPercent > 0 {
-		log.Printf("Process tail-trim: bottom %.0f%% by ops (hysteresis=%d cycles)", cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis)
+		log.Printf("Process allowlist override: %s", strings.Join(cfg.ProcessAllowlist, ", "))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

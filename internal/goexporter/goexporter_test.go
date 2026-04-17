@@ -152,8 +152,8 @@ func testResolver() *UsernameResolver {
 	return r
 }
 
-// TestDirectObserveUpdatesHistogram verifies that events update
-// Prometheus histogram metrics directly (no aggregator buffering).
+// TestDirectObserveUpdatesHistogram verifies that access and rpc wait
+// observations become visible after the current workload window closes.
 func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	t.Parallel()
 
@@ -176,6 +176,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	for _, event := range events {
 		processEvent(event, event.Comm, exporter, inflight, resolver, testSlurmResolver())
 	}
+	exporter.FlushWorkloadWindow()
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -237,6 +238,7 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	for _, event := range events {
 		processEvent(event, event.Comm, exporter, inflight, resolver, slurmResolver)
 	}
+	exporter.FlushWorkloadWindow()
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -274,6 +276,7 @@ func TestDirectObserveSlurmDisabledAbsentsLabel(t *testing.T) {
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 555, Comm: "dd",
 		DurationUS: 250, SizeBytes: 1024, MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}, "dd", exporter, inflight, resolver, testSlurmResolver())
+	exporter.FlushWorkloadWindow()
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -309,6 +312,7 @@ func TestDirectObserveUIDDisabledAbsentsLabels(t *testing.T) {
 	for _, event := range events {
 		processEvent(event, event.Comm, exporter, inflight, resolver, testSlurmResolver())
 	}
+	exporter.FlushWorkloadWindow()
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -344,6 +348,7 @@ func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	inflight := NewInflightTracker(exporter.Inflight, false, true)
 
 	processEvent(Event{Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd", DurationUS: 0, SizeBytes: 0, MountPath: "/mnt/lustre", FSName: "lustrefs"}, "dd", exporter, inflight, resolver, testSlurmResolver())
+	exporter.FlushWorkloadWindow()
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -478,6 +483,7 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 500, SizeBytes: 2048, MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}, "dd", exporter, inflight, resolver, testSlurmResolver())
+	exporter.FlushWorkloadWindow()
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -489,8 +495,8 @@ func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	if !strings.Contains(text, "mount=\"/mnt/lustre\"") {
 		t.Fatalf("missing mount label: %s", text)
 	}
-	if !strings.Contains(text, "username=\"testuser\"") {
-		t.Fatalf("missing username label: %s", text)
+	if !strings.Contains(text, `aggregation="total"`) {
+		t.Fatalf("missing aggregation label: %s", text)
 	}
 }
 

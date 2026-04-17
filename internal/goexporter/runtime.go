@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/yuuki/lustre-ebpf-exporter/internal/goexporter/slurm"
 )
@@ -44,22 +43,22 @@ func Run(ctx context.Context, cfg Config) error {
 	resolver := NewUsernameResolver()
 	slurmResolver := newSlurmResolverFromConfig(cfg)
 	procNameResolver := NewProcNameResolver()
-	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis, cfg.ProcessNameStripSuffix)
+	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessNameStripSuffix)
 
-	lliteMap, rpcMap := source.CounterMaps()
+	_, _ = source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
 	var pccMap, pccErrorMap *ebpf.Map
 	if cfg.PCCEnabled {
 		pccMap, pccErrorMap = source.PccCounterMaps()
 	}
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
-	counterCollector.StartDrain(ctx, cfg.DrainInterval)
+	counterCollector := NewBPFCounterCollector(nil, nil, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 
 	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 	if err != nil {
 		return err
 	}
 	defer exporter.Shutdown(context.Background())
+	exporter.SetProcessFilter(processFilter)
 
 	inflightTracker := NewInflightTracker(exporter.Inflight, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 
@@ -72,24 +71,29 @@ func Run(ctx context.Context, cfg Config) error {
 		durationTimer = timer.C
 	}
 
-	var onceTimer <-chan time.Time
-	if cfg.Once {
-		t := time.NewTimer(cfg.DrainInterval)
-		defer t.Stop()
-		onceTimer = t.C
-	}
+	windowTicker := time.NewTicker(cfg.DrainInterval)
+	defer windowTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			counterCollector.DrainOnce()
+			exporter.FlushWorkloadWindow()
 			return nil
 		case <-durationTimer:
-			return nil
-		case <-onceTimer:
 			counterCollector.DrainOnce()
+			exporter.FlushWorkloadWindow()
 			return nil
+		case <-windowTicker.C:
+			counterCollector.DrainOnce()
+			exporter.FlushWorkloadWindow()
+			if cfg.Once {
+				return nil
+			}
 		case event, ok := <-source.Events():
 			if !ok {
+				counterCollector.DrainOnce()
+				exporter.FlushWorkloadWindow()
 				return nil
 			}
 			if int(event.MountIdx) < len(mountInfos) {
@@ -113,13 +117,11 @@ func Run(ctx context.Context, cfg Config) error {
 func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
 	if event.Plane == PlaneLLite {
 		intent := AccessIntentForOp(event.Op)
-		if intent == "" || event.DurationUS == 0 {
+		if intent == "" {
 			return
 		}
 		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
-		exporter.AccessLatency.WithLabelValues(
-			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
-		).Observe(float64(event.DurationUS) / 1_000_000.0)
+		exporter.WorkloadCollector.ObserveAccess(event, uid, username, actorType, slurmJobID)
 		return
 	}
 
@@ -136,28 +138,28 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 	}
 
 	if event.Op == OpQueueWait {
-		if event.DurationUS > 0 {
-			uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
-			exporter.RPCWaitLat.WithLabelValues(
-				ptlrpcLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
-			).Observe(float64(event.DurationUS) / 1_000_000.0)
-		}
+		uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
+		exporter.WorkloadCollector.ObserveRPCWait(event, uid, username, actorType, slurmJobID)
 		return
 	}
 
-	var counter *prometheus.CounterVec
 	var delta float64
 	switch event.Op {
 	case OpSendNewReq:
-		counter, delta = exporter.RequestsStarted, 1
+		delta = 1
 	case OpFreeReq:
-		counter, delta = exporter.RequestsCompleted, -1
+		delta = -1
 	default:
 		return
 	}
 	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
 	labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
-	counter.WithLabelValues(labels...).Inc()
+	switch event.Op {
+	case OpSendNewReq:
+		exporter.RequestsStarted.WithLabelValues(labels...).Inc()
+	case OpFreeReq:
+		exporter.RequestsCompleted.WithLabelValues(labels...).Inc()
+	}
 	inflight.Update(delta, event, uid, username, actorType, slurmJobID)
 }
 
