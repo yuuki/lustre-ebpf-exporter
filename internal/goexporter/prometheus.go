@@ -114,17 +114,14 @@ type PrometheusExporter struct {
 	UIDEnabled                    bool
 	HistogramProcessLabelsEnabled bool
 
-	AccessLatency        *prometheus.HistogramVec
-	RPCWaitLat           *prometheus.HistogramVec
-	AccessDurationTotal  *prometheus.CounterVec
-	RPCWaitDurationTotal *prometheus.CounterVec
-	Inflight             *prometheus.GaugeVec
-	RequestsStarted      *prometheus.CounterVec
-	RequestsCompleted    *prometheus.CounterVec
+	AccessLatency     *prometheus.HistogramVec
+	RPCWaitLat        *prometheus.HistogramVec
+	Inflight          *prometheus.GaugeVec
+	RequestsStarted   *prometheus.CounterVec
+	RequestsCompleted *prometheus.CounterVec
 
 	// PCC metrics (nil when PCCEnabled is false)
 	PCCLatency             *prometheus.HistogramVec
-	PCCDurationTotal       *prometheus.CounterVec
 	PCCAttachTotal         *prometheus.CounterVec
 	PCCAttachFailuresTotal *prometheus.CounterVec
 	PCCDetachTotal         *prometheus.CounterVec
@@ -146,14 +143,6 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 		RPCWaitLat: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{Name: "lustre_client_rpc_wait_duration_seconds", Help: "Aggregated ptlrpc queue wait latency in seconds", Buckets: PrometheusLatencyBucketsSeconds},
 			buildPtlrpcHistogramLabels(slurmEnabled, uidEnabled, histogramProcessLabelsEnabled),
-		),
-		AccessDurationTotal: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "lustre_client_access_duration_seconds_total", Help: "Total llite access latency summed across operations in seconds"},
-			buildLliteLabels(slurmEnabled, uidEnabled),
-		),
-		RPCWaitDurationTotal: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "lustre_client_rpc_wait_duration_seconds_total", Help: "Total ptlrpc queue wait latency summed across operations in seconds"},
-			buildPtlrpcLabels(slurmEnabled, uidEnabled),
 		),
 		Inflight: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "lustre_client_inflight_requests", Help: "Net tracked ptlrpc requests"},
@@ -177,7 +166,6 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 
 	collectors := []prometheus.Collector{
 		exporter.AccessLatency, exporter.RPCWaitLat,
-		exporter.AccessDurationTotal, exporter.RPCWaitDurationTotal,
 		exporter.Inflight,
 		exporter.RequestsStarted, exporter.RequestsCompleted,
 	}
@@ -190,13 +178,6 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 				Buckets: PrometheusLatencyBucketsSeconds,
 			},
 			buildLliteHistogramLabels(slurmEnabled, uidEnabled, histogramProcessLabelsEnabled),
-		)
-		exporter.PCCDurationTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "lustre_client_pcc_operation_duration_seconds_total",
-				Help: "Total PCC I/O latency summed across operations in seconds",
-			},
-			buildLliteLabels(slurmEnabled, uidEnabled),
 		)
 		exporter.PCCAttachTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -228,7 +209,6 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 		)
 		collectors = append(collectors,
 			exporter.PCCLatency,
-			exporter.PCCDurationTotal,
 			exporter.PCCAttachTotal, exporter.PCCAttachFailuresTotal,
 			exporter.PCCDetachTotal, exporter.PCCInvalidationsTotal,
 		)

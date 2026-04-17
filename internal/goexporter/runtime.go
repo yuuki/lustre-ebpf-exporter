@@ -120,9 +120,6 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 		exporter.AccessLatency.WithLabelValues(
 			lliteHistogramLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled, exporter.HistogramProcessLabelsEnabled)...,
 		).Observe(float64(event.DurationUS) / 1_000_000.0)
-		exporter.AccessDurationTotal.WithLabelValues(
-			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
-		).Add(float64(event.DurationUS) / 1_000_000.0)
 		return
 	}
 
@@ -144,9 +141,6 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 			exporter.RPCWaitLat.WithLabelValues(
 				ptlrpcHistogramLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled, exporter.HistogramProcessLabelsEnabled)...,
 			).Observe(float64(event.DurationUS) / 1_000_000.0)
-			exporter.RPCWaitDurationTotal.WithLabelValues(
-				ptlrpcLabelValues(event.FSName, event.MountPath, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
-			).Add(float64(event.DurationUS) / 1_000_000.0)
 		}
 		return
 	}
@@ -180,9 +174,6 @@ func processPCCEvent(event Event, rawComm string, exporter *PrometheusExporter, 
 		exporter.PCCLatency.WithLabelValues(
 			lliteHistogramLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled, exporter.HistogramProcessLabelsEnabled)...,
 		).Observe(float64(event.DurationUS) / 1_000_000.0)
-		exporter.PCCDurationTotal.WithLabelValues(
-			lliteLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)...,
-		).Add(float64(event.DurationUS) / 1_000_000.0)
 
 	case OpPCCAttach:
 		mode, trigger := DecodePCCAttachInfo(event.RequestPtr)

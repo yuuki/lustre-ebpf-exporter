@@ -1104,7 +1104,7 @@ func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
 	}
 }
 
-func TestDirectObserveAddsProcessLabeledDurationCounters(t *testing.T) {
+func TestDirectObserveDoesNotExposeDurationTotalCounters(t *testing.T) {
 	t.Parallel()
 
 	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
@@ -1130,29 +1130,17 @@ func TestDirectObserveAddsProcessLabeledDurationCounters(t *testing.T) {
 		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}, "cp", exporter, inflight, resolver, slurmResolver)
 
-	lliteLabels := []string{"lustrefs", "/mnt/lustre", IntentDataWrite, OpWrite, "1001", "testuser", "dd", "user"}
-	if got := readCounterValue(t, exporter.AccessDurationTotal.WithLabelValues(lliteLabels...)); got != 0.00025 {
-		t.Fatalf("expected llite duration total 0.00025, got %f", got)
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	rpcLabels := []string{"lustrefs", "/mnt/lustre", OpQueueWait, "1001", "testuser", "dd", "user"}
-	if got := readCounterValue(t, exporter.RPCWaitDurationTotal.WithLabelValues(rpcLabels...)); got != 0.000075 {
-		t.Fatalf("expected rpc duration total 0.000075, got %f", got)
-	}
-
-	pccLabels := []string{"lustrefs", "/mnt/lustre", IntentDataRead, OpRead, "1001", "testuser", "cp", "user"}
-	if got := readCounterValue(t, exporter.PCCDurationTotal.WithLabelValues(pccLabels...)); got != 0.0001 {
-		t.Fatalf("expected pcc duration total 0.0001, got %f", got)
-	}
-
 	for _, familyName := range []string{
 		"lustre_client_access_duration_seconds_total",
 		"lustre_client_rpc_wait_duration_seconds_total",
 		"lustre_client_pcc_operation_duration_seconds_total",
 	} {
-		labelNames := labelNamesForMetricFamily(t, exporter, familyName)
-		if !hasLabel(labelNames, "process") {
-			t.Fatalf("%s missing process label: %v", familyName, labelNames)
+		if strings.Contains(text, familyName) {
+			t.Fatalf("%s should not be exposed: %s", familyName, text)
 		}
 	}
 }

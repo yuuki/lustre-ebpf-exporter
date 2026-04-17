@@ -108,17 +108,14 @@ The Prometheus metric family names are:
 
 - `lustre_client_access_operations_total`
 - `lustre_client_access_duration_seconds`
-- `lustre_client_access_duration_seconds_total`
 - `lustre_client_data_bytes_total`
 - `lustre_client_operation_errors_total`
 - `lustre_client_rpc_wait_operations_total`
 - `lustre_client_rpc_wait_duration_seconds`
-- `lustre_client_rpc_wait_duration_seconds_total`
 - `lustre_client_rpc_errors_total`
 - `lustre_client_inflight_requests`
 - `lustre_client_pcc_operations_total`
 - `lustre_client_pcc_operation_duration_seconds`
-- `lustre_client_pcc_operation_duration_seconds_total`
 - `lustre_client_pcc_data_bytes_total`
 - `lustre_client_pcc_operation_errors_total`
 - `lustre_client_pcc_attach_total`
@@ -174,10 +171,6 @@ This keeps `_bucket`, `_sum`, and `_count` series from multiplying by process na
 --histogram-process-labels
 # Re-enable process on histogram families
 ```
-
-Per-process latency sums remain available via the dedicated counters
-`*_duration_seconds_total`, and per-process counts remain available via the
-existing `*_operations_total` counters.
 
 #### `--process-allowlist` (static filtering)
 
@@ -258,16 +251,13 @@ Go CO-RE exporter:
 
 - `lustre_client_access_operations_total`
 - `lustre_client_access_duration_seconds`
-- `lustre_client_access_duration_seconds_total`
 - `lustre_client_operation_errors_total` (llite VFS failures classified by errno_class; requires kretprobes)
 - `lustre_client_rpc_wait_operations_total` when the relevant optional probes are available
 - `lustre_client_rpc_wait_duration_seconds` when the relevant optional probes are available
-- `lustre_client_rpc_wait_duration_seconds_total` when the relevant optional probes are available
 - `lustre_client_rpc_errors_total` when the relevant optional probes are available (`ptlrpc_resend_req`, `ptlrpc_restart_req`, `ptlrpc_expire_one_request`, `ptlrpc_request_handle_notconn`)
 - `lustre_client_inflight_requests` when request lifecycle probes are available
 - `lustre_client_pcc_operations_total` when PCC module probes are available
 - `lustre_client_pcc_operation_duration_seconds` when PCC module probes are available
-- `lustre_client_pcc_operation_duration_seconds_total` when PCC module probes are available
 - `lustre_client_pcc_data_bytes_total` when PCC module probes are available
 - `lustre_client_pcc_operation_errors_total` when PCC module probes are available
 - `lustre_client_pcc_attach_total` when PCC attach probes are available
@@ -323,7 +313,7 @@ Useful flags:
 - `--process-tail-trim-percent` (dynamically trim the bottom N% of processes by operation count; default 0 = disabled)
 - `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 1)
 - `--process-name-strip-suffix` (strip trailing separator+digits from process names; default `false`)
-- `--histogram-process-labels` (default `false`; when `false`, histogram families omit `process` while process-labeled duration totals remain available)
+- `--histogram-process-labels` (default `false`; when `false`, histogram families omit `process`)
 - `--uid-labels` (default `true`; when `false`, drops `uid` and `username` labels and skips kernel-side `bpf_get_current_uid_gid()` — collapsing BPF PERCPU_HASH rows across users)
 - `--web.listen-address`
 - `--web.telemetry-path`
