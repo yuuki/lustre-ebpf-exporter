@@ -1084,7 +1084,7 @@ func TestHistogramProcessLabelsDisabledByDefault(t *testing.T) {
 func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1092,15 +1092,30 @@ func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
 
 	resolver := testResolver()
 	inflight := NewInflightTracker(exporter.Inflight, false, true)
+	slurmResolver := testSlurmResolver()
 
 	processEvent(Event{
 		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 250, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, "dd", exporter, inflight, resolver, testSlurmResolver())
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
+		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "cp", exporter, inflight, resolver, slurmResolver)
 
-	labelNames := labelNamesForMetricFamily(t, exporter, "lustre_client_access_duration_seconds")
-	if !hasLabel(labelNames, "process") {
-		t.Fatalf("histogram process label was not restored: %v", labelNames)
+	for _, familyName := range []string{
+		"lustre_client_access_duration_seconds",
+		"lustre_client_rpc_wait_duration_seconds",
+		"lustre_client_pcc_operation_duration_seconds",
+	} {
+		labelNames := labelNamesForMetricFamily(t, exporter, familyName)
+		if !hasLabel(labelNames, "process") {
+			t.Fatalf("histogram process label was not restored for %s: %v", familyName, labelNames)
+		}
 	}
 }
 
