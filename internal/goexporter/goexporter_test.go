@@ -192,7 +192,7 @@ func hasLabel(labelNames []string, want string) bool {
 func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 func TestDirectObserveSlurmDisabledAbsentsLabel(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestDirectObserveSlurmDisabledAbsentsLabel(t *testing.T) {
 func TestDirectObserveUIDDisabledAbsentsLabels(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, false, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestDirectObserveUIDDisabledAbsentsLabels(t *testing.T) {
 func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +744,7 @@ func TestBpfErrorCounterValSize(t *testing.T) {
 func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -806,46 +806,32 @@ func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	}
 }
 
-// ---------- PCC tests ----------
-
-func TestPlaneNamePCC(t *testing.T) {
+func TestPlaneNameRejectsRemovedPCC(t *testing.T) {
 	t.Parallel()
-	name, err := planeName(rawPlanePCC)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != PlanePCC {
-		t.Fatalf("expected %q, got %q", PlanePCC, name)
+	if _, err := planeName(rawPlanePCC); err == nil {
+		t.Fatalf("expected raw PCC plane %d to be rejected", rawPlanePCC)
 	}
 }
 
-func TestOpNamePCCCodes(t *testing.T) {
+func TestOpNameRejectsRemovedPCCCodes(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		raw  uint8
-		want string
-	}{
-		{rawOpPCCRead, OpRead},
-		{rawOpPCCWrite, OpWrite},
-		{rawOpPCCOpen, OpOpen},
-		{rawOpPCCLookup, OpLookup},
-		{rawOpPCCFsync, OpFsync},
-		{rawOpPCCAttach, OpPCCAttach},
-		{rawOpPCCDetach, OpPCCDetach},
-		{rawOpPCCInvalidate, OpPCCInvalidate},
-	}
-	for _, tt := range tests {
-		got, err := opName(tt.raw)
-		if err != nil {
-			t.Fatalf("opName(%d): %v", tt.raw, err)
-		}
-		if got != tt.want {
-			t.Fatalf("opName(%d) = %q, want %q", tt.raw, got, tt.want)
+	for _, raw := range []uint8{
+		rawOpPCCRead,
+		rawOpPCCWrite,
+		rawOpPCCOpen,
+		rawOpPCCLookup,
+		rawOpPCCFsync,
+		rawOpPCCAttach,
+		rawOpPCCDetach,
+		rawOpPCCInvalidate,
+	} {
+		if _, err := opName(raw); err == nil {
+			t.Fatalf("expected raw PCC op %d to be rejected", raw)
 		}
 	}
 }
 
-func TestParseObserverEventPCC(t *testing.T) {
+func TestParseObserverEventRejectsRemovedPCC(t *testing.T) {
 	t.Parallel()
 	sample := make([]byte, 64)
 	sample[0] = rawPlanePCC
@@ -858,59 +844,31 @@ func TestParseObserverEventPCC(t *testing.T) {
 	binary.LittleEndian.PutUint64(sample[32:40], 8192)
 	copy(sample[48:64], []byte("cp\x00"))
 
-	event, err := parseObserverEvent(sample)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if event.Plane != PlanePCC {
-		t.Fatalf("expected plane %q, got %q", PlanePCC, event.Plane)
-	}
-	if event.Op != OpRead {
-		t.Fatalf("expected op %q, got %q", OpRead, event.Op)
-	}
-	if event.DurationUS != 150 {
-		t.Fatalf("expected duration 150, got %d", event.DurationUS)
-	}
-	if event.SizeBytes != 8192 {
-		t.Fatalf("expected size 8192, got %d", event.SizeBytes)
-	}
-	if event.Comm != "cp" {
-		t.Fatalf("expected comm %q, got %q", "cp", event.Comm)
+	if _, err := parseObserverEvent(sample); err == nil {
+		t.Fatalf("expected PCC raw event to be rejected")
 	}
 }
 
-func TestDirectObservePCCHistogram(t *testing.T) {
+func TestPrometheusExporterDoesNotRegisterPCCMetrics(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer exporter.Shutdown(context.Background())
-
-	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, false, true)
-	slurmResolver := testSlurmResolver()
-
-	events := []Event{
-		{Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp", DurationUS: 100, SizeBytes: 4096, MountPath: "/mnt/lustre", FSName: "lustrefs"},
-		{Plane: PlanePCC, Op: OpWrite, UID: 1001, PID: 123, Comm: "cp", DurationUS: 200, SizeBytes: 8192, MountPath: "/mnt/lustre", FSName: "lustrefs"},
-	}
-	for _, event := range events {
-		processEvent(event, event.Comm, exporter, inflight, resolver, slurmResolver)
-	}
 
 	text, err := exporter.RenderText()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, "lustre_client_pcc_operation_duration_seconds_bucket") {
-		t.Fatalf("missing PCC histogram family: %s", text)
+	if strings.Contains(text, "lustre_client_pcc_") {
+		t.Fatalf("unexpected PCC metrics in registry: %s", text)
 	}
 }
 
-func TestPCCSkipsZeroDuration(t *testing.T) {
+func TestProcessEventIgnoresRemovedPCCPlane(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -920,130 +878,22 @@ func TestPCCSkipsZeroDuration(t *testing.T) {
 	inflight := NewInflightTracker(exporter.Inflight, false, true)
 	slurmResolver := testSlurmResolver()
 
-	event := Event{Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp", DurationUS: 0, SizeBytes: 4096, MountPath: "/mnt/lustre", FSName: "lustrefs"}
+	event := Event{Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp", DurationUS: 100, SizeBytes: 4096, MountPath: "/mnt/lustre", FSName: "lustrefs"}
 	processEvent(event, event.Comm, exporter, inflight, resolver, slurmResolver)
 
 	text, err := exporter.RenderText()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(text, "lustre_client_pcc_operation_duration_seconds_bucket") {
-		t.Fatalf("zero-duration PCC event should not produce histogram observation: %s", text)
-	}
-}
-
-func TestPCCAttachDecoding(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		requestPtr  uint64
-		wantMode    string
-		wantTrigger string
-	}{
-		{"ro_manual", (1 << 8) | 1, PCCModeRO, PCCTriggerManual},
-		{"rw_auto", (2 << 8) | 2, PCCModeRW, PCCTriggerAuto},
-		{"ro_auto", (1 << 8) | 2, PCCModeRO, PCCTriggerAuto},
-		{"unknown_mode", (0 << 8) | 1, "unknown", PCCTriggerManual},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mode, trigger := DecodePCCAttachInfo(tt.requestPtr)
-			if mode != tt.wantMode {
-				t.Fatalf("mode: got %q, want %q", mode, tt.wantMode)
-			}
-			if trigger != tt.wantTrigger {
-				t.Fatalf("trigger: got %q, want %q", trigger, tt.wantTrigger)
-			}
-		})
-	}
-}
-
-func TestPCCAttachEvent(t *testing.T) {
-	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer exporter.Shutdown(context.Background())
-
-	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, false, true)
-	slurmResolver := testSlurmResolver()
-
-	// Successful RO auto-attach.
-	attachEvent := Event{
-		Plane: PlanePCC, Op: OpPCCAttach, UID: 1001, PID: 123, Comm: "cp",
-		DurationUS: 50, RequestPtr: (1 << 8) | 2, // mode=RO, trigger=auto
-		MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}
-	processEvent(attachEvent, attachEvent.Comm, exporter, inflight, resolver, slurmResolver)
-
-	// Failed RW manual-attach.
-	failedAttach := Event{
-		Plane: PlanePCC, Op: OpPCCAttach, UID: 1001, PID: 123, Comm: "cp",
-		DurationUS: 30, RequestPtr: (2 << 8) | 1, // mode=RW, trigger=manual
-		ErrnoClass: ErrnoClassIO,
-		MountPath:  "/mnt/lustre", FSName: "lustrefs",
-	}
-	processEvent(failedAttach, failedAttach.Comm, exporter, inflight, resolver, slurmResolver)
-
-	text, err := exporter.RenderText()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(text, "lustre_client_pcc_attach_total") {
-		t.Fatalf("missing pcc_attach_total: %s", text)
-	}
-	if !strings.Contains(text, "lustre_client_pcc_attach_failures_total") {
-		t.Fatalf("missing pcc_attach_failures_total: %s", text)
-	}
-	if !strings.Contains(text, `mode="ro"`) {
-		t.Fatalf("missing mode=ro label: %s", text)
-	}
-	if !strings.Contains(text, `trigger="auto"`) {
-		t.Fatalf("missing trigger=auto label: %s", text)
-	}
-}
-
-func TestPCCDetachAndInvalidateEvents(t *testing.T) {
-	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer exporter.Shutdown(context.Background())
-
-	resolver := testResolver()
-	inflight := NewInflightTracker(exporter.Inflight, false, true)
-	slurmResolver := testSlurmResolver()
-
-	detachEvent := Event{
-		Plane: PlanePCC, Op: OpPCCDetach, UID: 1001, PID: 123, Comm: "lfs",
-		MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}
-	invalidateEvent := Event{
-		Plane: PlanePCC, Op: OpPCCInvalidate, UID: 1001, PID: 123, Comm: "lustre",
-		MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}
-	processEvent(detachEvent, detachEvent.Comm, exporter, inflight, resolver, slurmResolver)
-	processEvent(invalidateEvent, invalidateEvent.Comm, exporter, inflight, resolver, slurmResolver)
-
-	text, err := exporter.RenderText()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(text, "lustre_client_pcc_detach_total") {
-		t.Fatalf("missing pcc_detach_total: %s", text)
-	}
-	if !strings.Contains(text, "lustre_client_pcc_layout_invalidations_total") {
-		t.Fatalf("missing pcc_layout_invalidations_total: %s", text)
+	if strings.Contains(text, "lustre_client_pcc_") {
+		t.Fatalf("unexpected PCC metrics after processing PCC event: %s", text)
 	}
 }
 
 func TestHistogramProcessLabelsDisabledByDefault(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1061,15 +911,10 @@ func TestHistogramProcessLabelsDisabledByDefault(t *testing.T) {
 		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}, "dd", exporter, inflight, resolver, slurmResolver)
-	processEvent(Event{
-		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
-		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, "cp", exporter, inflight, resolver, slurmResolver)
 
 	for _, familyName := range []string{
 		"lustre_client_access_duration_seconds",
 		"lustre_client_rpc_wait_duration_seconds",
-		"lustre_client_pcc_operation_duration_seconds",
 	} {
 		labelNames := labelNamesForMetricFamily(t, exporter, familyName)
 		if hasLabel(labelNames, "process") {
@@ -1084,7 +929,7 @@ func TestHistogramProcessLabelsDisabledByDefault(t *testing.T) {
 func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1102,15 +947,10 @@ func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
 		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}, "dd", exporter, inflight, resolver, slurmResolver)
-	processEvent(Event{
-		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
-		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, "cp", exporter, inflight, resolver, slurmResolver)
 
 	for _, familyName := range []string{
 		"lustre_client_access_duration_seconds",
 		"lustre_client_rpc_wait_duration_seconds",
-		"lustre_client_pcc_operation_duration_seconds",
 	} {
 		labelNames := labelNamesForMetricFamily(t, exporter, familyName)
 		if !hasLabel(labelNames, "process") {
@@ -1122,7 +962,7 @@ func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
 func TestDirectObserveDoesNotExposeDurationTotalCounters(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1140,10 +980,6 @@ func TestDirectObserveDoesNotExposeDurationTotalCounters(t *testing.T) {
 		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
 		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
 	}, "dd", exporter, inflight, resolver, slurmResolver)
-	processEvent(Event{
-		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
-		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
-	}, "cp", exporter, inflight, resolver, slurmResolver)
 
 	text, err := exporter.RenderText()
 	if err != nil {
@@ -1152,7 +988,6 @@ func TestDirectObserveDoesNotExposeDurationTotalCounters(t *testing.T) {
 	for _, familyName := range []string{
 		"lustre_client_access_duration_seconds_total",
 		"lustre_client_rpc_wait_duration_seconds_total",
-		"lustre_client_pcc_operation_duration_seconds_total",
 	} {
 		if strings.Contains(text, familyName) {
 			t.Fatalf("%s should not be exposed: %s", familyName, text)

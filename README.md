@@ -48,7 +48,7 @@ use the legacy Python exporter.
 
 ## Observation Model
 
-The design intentionally separates three planes:
+The design intentionally separates two planes:
 
 1. `llite`
    This is the user-facing workload plane. It answers who touched Lustre and which operation class
@@ -58,14 +58,6 @@ The design intentionally separates three planes:
 2. `PtlRPC`
    This is the client-internal impact plane. It answers how much RPC wait occurred inside the
    Lustre client.
-
-3. `PCC` (Persistent Client Cache)
-   This is the client-local cache plane. It answers how much I/O was served from the PCC cache
-   layer and tracks attach/detach lifecycle events. Observed via optional kprobes on
-   `pcc_file_read_iter`, `pcc_file_write_iter`, `pcc_file_open`, `pcc_lookup`, `pcc_fsync`,
-   and attach/detach functions. All PCC probes degrade gracefully when the PCC module is not loaded.
-   PCC metric collection is disabled by default and must be explicitly enabled with
-   `--collector.pcc`.
 
 The `access_intent` label classifies operations into:
 
@@ -114,14 +106,6 @@ The Prometheus metric family names are:
 - `lustre_client_rpc_wait_duration_seconds`
 - `lustre_client_rpc_errors_total`
 - `lustre_client_inflight_requests`
-- `lustre_client_pcc_operations_total`
-- `lustre_client_pcc_operation_duration_seconds`
-- `lustre_client_pcc_data_bytes_total`
-- `lustre_client_pcc_operation_errors_total`
-- `lustre_client_pcc_attach_total`
-- `lustre_client_pcc_attach_failures_total`
-- `lustre_client_pcc_detach_total`
-- `lustre_client_pcc_layout_invalidations_total`
 
 Common labels for counters and gauges are:
 
@@ -143,10 +127,6 @@ Additional labels by family:
 - llite error metrics also use `access_intent`, `op`, and `errno_class` (values: `timeout`, `notconn`, `perm`, `notfound`, `io`, `again`, `other`)
 - RPC wait metrics also use `op`
 - RPC error metrics also use `event` (values: `resend`, `restart`, `expire`, `notconn`)
-- PCC I/O metrics use `access_intent` and `op` (same schema as llite)
-- PCC error metrics use `access_intent`, `op`, and `errno_class`
-- PCC attach metrics use `mode` (`ro`, `rw`) and `trigger` (`manual`, `auto`)
-- PCC detach and invalidation metrics use the common labels only
 
 Label cardinality is intentionally constrained:
 
@@ -162,9 +142,8 @@ cardinality. Five flags work together to keep the `process` label manageable.
 
 #### `--histogram-process-labels` (histogram override)
 
-By default, the histogram families `lustre_client_access_duration_seconds`,
-`lustre_client_rpc_wait_duration_seconds`, and
-`lustre_client_pcc_operation_duration_seconds` do not carry the `process` label.
+By default, the histogram families `lustre_client_access_duration_seconds`
+and `lustre_client_rpc_wait_duration_seconds` do not carry the `process` label.
 This keeps `_bucket`, `_sum`, and `_count` series from multiplying by process name.
 
 ```bash
@@ -256,14 +235,6 @@ Go CO-RE exporter:
 - `lustre_client_rpc_wait_duration_seconds` when the relevant optional probes are available
 - `lustre_client_rpc_errors_total` when the relevant optional probes are available (`ptlrpc_resend_req`, `ptlrpc_restart_req`, `ptlrpc_expire_one_request`, `ptlrpc_request_handle_notconn`)
 - `lustre_client_inflight_requests` when request lifecycle probes are available
-- `lustre_client_pcc_operations_total` when PCC module probes are available
-- `lustre_client_pcc_operation_duration_seconds` when PCC module probes are available
-- `lustre_client_pcc_data_bytes_total` when PCC module probes are available
-- `lustre_client_pcc_operation_errors_total` when PCC module probes are available
-- `lustre_client_pcc_attach_total` when PCC attach probes are available
-- `lustre_client_pcc_attach_failures_total` when PCC attach probes are available
-- `lustre_client_pcc_detach_total` when PCC lifecycle probes are available
-- `lustre_client_pcc_layout_invalidations_total` when PCC lifecycle probes are available
 
 The legacy Python exporter emits all six families; see [`legacy/`](legacy/README.md).
 

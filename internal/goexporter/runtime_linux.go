@@ -88,35 +88,6 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		{symbol: "ptlrpc_request_handle_notconn", program: "ptlrpc_request_handle_notconn_enter", optional: true},
 	}
 
-	if cfg.PCCEnabled {
-		// PCC I/O probes (Phase 1). All optional — PCC module may not be loaded.
-		optional = append(optional,
-			probeSpec{symbol: "pcc_file_read_iter", program: "pcc_file_read_iter_enter", optional: true},
-			probeSpec{symbol: "pcc_file_read_iter", program: "pcc_file_read_iter_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_file_write_iter", program: "pcc_file_write_iter_enter", optional: true},
-			probeSpec{symbol: "pcc_file_write_iter", program: "pcc_file_write_iter_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_file_open", program: "pcc_file_open_enter", optional: true},
-			probeSpec{symbol: "pcc_file_open", program: "pcc_file_open_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_lookup", program: "pcc_lookup_enter", optional: true},
-			probeSpec{symbol: "pcc_lookup", program: "pcc_lookup_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_fsync", program: "pcc_fsync_enter", optional: true},
-			probeSpec{symbol: "pcc_fsync", program: "pcc_fsync_exit", ret: true, optional: true},
-			// PCC attach/detach probes (Phase 2).
-			probeSpec{symbol: "pcc_ioctl_attach", program: "pcc_ioctl_attach_enter", optional: true},
-			probeSpec{symbol: "pcc_ioctl_attach", program: "pcc_ioctl_attach_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_ioctl_detach", program: "pcc_ioctl_detach_enter", optional: true},
-			probeSpec{symbol: "pcc_ioctl_detach", program: "pcc_ioctl_detach_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_try_auto_attach", program: "pcc_try_auto_attach_enter", optional: true},
-			probeSpec{symbol: "pcc_try_auto_attach", program: "pcc_try_auto_attach_exit", ret: true, optional: true},
-			probeSpec{symbol: "pcc_try_readonly_open_attach", program: "pcc_try_readonly_open_attach_enter", optional: true},
-			probeSpec{symbol: "pcc_try_readonly_open_attach", program: "pcc_try_readonly_open_attach_exit", ret: true, optional: true},
-			// pcc_readonly_attach_sync and pcc_readwrite_attach are internal
-			// functions called by the top-level attach probes above; not probed
-			// to avoid inflight_map key collisions on the same thread.
-			probeSpec{symbol: "pcc_layout_invalidate", program: "pcc_layout_invalidate_enter", optional: true},
-		)
-	}
-
 	spec, err := bpf.LoadCollectionSpec()
 	if err != nil {
 		return nil, err
@@ -141,15 +112,6 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		}
 	case !cfg.UIDLabelsEnabled:
 		return nil, fmt.Errorf("embedded BPF object does not expose uid_labels_enabled; --uid-labels=false cannot be honored")
-	}
-	// Remove PCC BPF programs from spec when PCC is disabled to avoid
-	// unnecessary verifier work at startup.
-	if !cfg.PCCEnabled {
-		for name := range spec.Programs {
-			if strings.HasPrefix(name, "pcc_") {
-				delete(spec.Programs, name)
-			}
-		}
 	}
 	skippedSet := make(map[string]struct{})
 	collection, skippedPrograms, err := loadCollectionWithOptionalPrograms(spec, optional)
@@ -297,10 +259,6 @@ func (s *linuxEventSource) CounterMaps() (llite, rpc *ebpf.Map) {
 
 func (s *linuxEventSource) ErrorCounterMaps() (lliteErrors, rpcErrors *ebpf.Map) {
 	return s.collection.Maps["llite_error_counters"], s.collection.Maps["rpc_error_counters"]
-}
-
-func (s *linuxEventSource) PccCounterMaps() (pcc, pccErrors *ebpf.Map) {
-	return s.collection.Maps["pcc_counters"], s.collection.Maps["pcc_error_counters"]
 }
 
 func (s *linuxEventSource) Close() error {

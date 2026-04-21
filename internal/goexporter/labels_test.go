@@ -25,7 +25,6 @@ func TestLabelBuildersMatrix(t *testing.T) {
 		lliteHist  []string
 		lliteErr   []string
 		rpcError   []string
-		pccAttach  []string
 	}{
 		{
 			name:       "both_disabled",
@@ -38,7 +37,6 @@ func TestLabelBuildersMatrix(t *testing.T) {
 			lliteHist:  []string{"fs", "mount", "access_intent", "op", "actor_type"},
 			lliteErr:   []string{"fs", "mount", "access_intent", "op", "process", "actor_type", "errno_class"},
 			rpcError:   []string{"fs", "mount", "event", "process", "actor_type"},
-			pccAttach:  []string{"fs", "mount", "mode", "trigger", "process", "actor_type"},
 		},
 		{
 			name:       "slurm_only",
@@ -51,7 +49,6 @@ func TestLabelBuildersMatrix(t *testing.T) {
 			lliteHist:  []string{"fs", "mount", "access_intent", "op", "actor_type", "slurm_job_id"},
 			lliteErr:   []string{"fs", "mount", "access_intent", "op", "process", "actor_type", "slurm_job_id", "errno_class"},
 			rpcError:   []string{"fs", "mount", "event", "process", "actor_type", "slurm_job_id"},
-			pccAttach:  []string{"fs", "mount", "mode", "trigger", "process", "actor_type", "slurm_job_id"},
 		},
 		{
 			name:       "uid_only",
@@ -64,7 +61,6 @@ func TestLabelBuildersMatrix(t *testing.T) {
 			lliteHist:  []string{"fs", "mount", "access_intent", "op", "uid", "username", "actor_type"},
 			lliteErr:   []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "errno_class"},
 			rpcError:   []string{"fs", "mount", "event", "uid", "username", "process", "actor_type"},
-			pccAttach:  []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type"},
 		},
 		{
 			name:       "both_enabled",
@@ -77,7 +73,6 @@ func TestLabelBuildersMatrix(t *testing.T) {
 			lliteHist:  []string{"fs", "mount", "access_intent", "op", "uid", "username", "actor_type", "slurm_job_id"},
 			lliteErr:   []string{"fs", "mount", "access_intent", "op", "uid", "username", "process", "actor_type", "slurm_job_id", "errno_class"},
 			rpcError:   []string{"fs", "mount", "event", "uid", "username", "process", "actor_type", "slurm_job_id"},
-			pccAttach:  []string{"fs", "mount", "mode", "trigger", "uid", "username", "process", "actor_type", "slurm_job_id"},
 		},
 	}
 
@@ -98,7 +93,6 @@ func TestLabelBuildersMatrix(t *testing.T) {
 				{"buildLliteHistogramLabels", buildLliteHistogramLabels(tc.slurm, tc.uid, false), tc.lliteHist},
 				{"buildLliteErrLabels", buildLliteErrLabels(tc.slurm, tc.uid), tc.lliteErr},
 				{"buildRPCErrorLabels", buildRPCErrorLabels(tc.slurm, tc.uid), tc.rpcError},
-				{"buildPCCAttachLabels", buildPCCAttachLabels(tc.slurm, tc.uid), tc.pccAttach},
 			}
 			for _, c := range checks {
 				if !reflect.DeepEqual(c.got, c.want) {
@@ -133,9 +127,6 @@ func TestLabelValuesMatchBuilderArity(t *testing.T) {
 			}
 			if got, want := len(lliteHistogramLabelValues("", "", "", "", "", "", "", "", "", slurm, uid, false)), len(buildLliteHistogramLabels(slurm, uid, false)); got != want {
 				t.Errorf("lliteHistogramLabelValues arity mismatch (slurm=%v uid=%v): got %d want %d", slurm, uid, got, want)
-			}
-			if got, want := len(pccAttachLabelValues("", "", "", "", "", "", "", "", "", slurm, uid)), len(buildPCCAttachLabels(slurm, uid)); got != want {
-				t.Errorf("pccAttachLabelValues arity mismatch (slurm=%v uid=%v): got %d want %d", slurm, uid, got, want)
 			}
 		}
 	}

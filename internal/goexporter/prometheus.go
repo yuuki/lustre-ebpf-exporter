@@ -94,13 +94,6 @@ func buildRPCErrorLabels(slurmEnabled, uidEnabled bool) []string {
 	return appendSlurmLabel(labels, slurmEnabled)
 }
 
-func buildPCCAttachLabels(slurmEnabled, uidEnabled bool) []string {
-	labels := []string{"fs", "mount", "mode", "trigger"}
-	labels = appendUIDLabels(labels, uidEnabled)
-	labels = append(labels, "process", "actor_type")
-	return appendSlurmLabel(labels, slurmEnabled)
-}
-
 // PrometheusExporter serves Prometheus metrics via HTTP.
 // Histograms and gauges are updated directly; counters are provided
 // by the BPFCounterCollector custom Collector.
@@ -109,7 +102,6 @@ type PrometheusExporter struct {
 	server   *http.Server
 	listener net.Listener
 
-	PCCEnabled                    bool
 	SlurmEnabled                  bool
 	UIDEnabled                    bool
 	HistogramProcessLabelsEnabled bool
@@ -119,20 +111,12 @@ type PrometheusExporter struct {
 	Inflight          *prometheus.GaugeVec
 	RequestsStarted   *prometheus.CounterVec
 	RequestsCompleted *prometheus.CounterVec
-
-	// PCC metrics (nil when PCCEnabled is false)
-	PCCLatency             *prometheus.HistogramVec
-	PCCAttachTotal         *prometheus.CounterVec
-	PCCAttachFailuresTotal *prometheus.CounterVec
-	PCCDetachTotal         *prometheus.CounterVec
-	PCCInvalidationsTotal  *prometheus.CounterVec
 }
 
-func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, pccEnabled bool, slurmEnabled bool, uidEnabled bool, histogramProcessLabelsEnabled bool) (*PrometheusExporter, error) {
+func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCollector *BPFCounterCollector, slurmEnabled bool, uidEnabled bool, histogramProcessLabelsEnabled bool) (*PrometheusExporter, error) {
 	registry := prometheus.NewRegistry()
 	exporter := &PrometheusExporter{
 		registry:                      registry,
-		PCCEnabled:                    pccEnabled,
 		SlurmEnabled:                  slurmEnabled,
 		UIDEnabled:                    uidEnabled,
 		HistogramProcessLabelsEnabled: histogramProcessLabelsEnabled,
@@ -168,50 +152,6 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 		exporter.AccessLatency, exporter.RPCWaitLat,
 		exporter.Inflight,
 		exporter.RequestsStarted, exporter.RequestsCompleted,
-	}
-
-	if pccEnabled {
-		exporter.PCCLatency = prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "lustre_client_pcc_operation_duration_seconds",
-				Help:    "PCC I/O operation latency in seconds",
-				Buckets: PrometheusLatencyBucketsSeconds,
-			},
-			buildLliteHistogramLabels(slurmEnabled, uidEnabled, histogramProcessLabelsEnabled),
-		)
-		exporter.PCCAttachTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "lustre_client_pcc_attach_total",
-				Help: "Total PCC attach attempts",
-			},
-			buildPCCAttachLabels(slurmEnabled, uidEnabled),
-		)
-		exporter.PCCAttachFailuresTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "lustre_client_pcc_attach_failures_total",
-				Help: "Total PCC attach failures",
-			},
-			buildPCCAttachLabels(slurmEnabled, uidEnabled),
-		)
-		exporter.PCCDetachTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "lustre_client_pcc_detach_total",
-				Help: "Total PCC detach operations",
-			},
-			buildBaseLabels(slurmEnabled, uidEnabled),
-		)
-		exporter.PCCInvalidationsTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "lustre_client_pcc_layout_invalidations_total",
-				Help: "Total PCC layout invalidation events",
-			},
-			buildBaseLabels(slurmEnabled, uidEnabled),
-		)
-		collectors = append(collectors,
-			exporter.PCCLatency,
-			exporter.PCCAttachTotal, exporter.PCCAttachFailuresTotal,
-			exporter.PCCDetachTotal, exporter.PCCInvalidationsTotal,
-		)
 	}
 	if counterCollector != nil {
 		collectors = append(collectors, counterCollector)
