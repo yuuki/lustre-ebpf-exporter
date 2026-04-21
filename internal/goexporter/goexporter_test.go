@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -152,12 +153,46 @@ func testResolver() *UsernameResolver {
 	return r
 }
 
+func labelNamesForMetricFamily(t *testing.T, exporter *PrometheusExporter, familyName string) []string {
+	t.Helper()
+
+	families, err := exporter.registry.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != familyName {
+			continue
+		}
+		if len(family.Metric) == 0 {
+			t.Fatalf("metric family %q has no metrics", familyName)
+		}
+		names := make([]string, 0, len(family.Metric[0].Label))
+		for _, label := range family.Metric[0].Label {
+			names = append(names, label.GetName())
+		}
+		sort.Strings(names)
+		return names
+	}
+	t.Fatalf("metric family %q not found", familyName)
+	return nil
+}
+
+func hasLabel(labelNames []string, want string) bool {
+	for _, name := range labelNames {
+		if name == want {
+			return true
+		}
+	}
+	return false
+}
+
 // TestDirectObserveUpdatesHistogram verifies that events update
 // Prometheus histogram metrics directly (no aggregator buffering).
 func TestDirectObserveUpdatesHistogram(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +234,7 @@ func TestDirectObserveUpdatesHistogram(t *testing.T) {
 func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +296,7 @@ func TestDirectObservePropagatesSlurmJobID(t *testing.T) {
 func TestDirectObserveSlurmDisabledAbsentsLabel(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +325,7 @@ func TestDirectObserveSlurmDisabledAbsentsLabel(t *testing.T) {
 func TestDirectObserveUIDDisabledAbsentsLabels(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, false)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +369,7 @@ func TestDirectObserveUIDDisabledAbsentsLabels(t *testing.T) {
 func TestDirectObserveSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +494,7 @@ func TestParseObserverEventMatchesBPFLayout(t *testing.T) {
 func TestPrometheusExporterRendersFamilies(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +744,7 @@ func TestBpfErrorCounterValSize(t *testing.T) {
 func TestPtlRPCStartedCompletedCounters(t *testing.T) {
 	t.Parallel()
 
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +881,7 @@ func TestParseObserverEventPCC(t *testing.T) {
 
 func TestDirectObservePCCHistogram(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,7 +910,7 @@ func TestDirectObservePCCHistogram(t *testing.T) {
 
 func TestPCCSkipsZeroDuration(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,7 +960,7 @@ func TestPCCAttachDecoding(t *testing.T) {
 
 func TestPCCAttachEvent(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -972,7 +1007,7 @@ func TestPCCAttachEvent(t *testing.T) {
 
 func TestPCCDetachAndInvalidateEvents(t *testing.T) {
 	t.Parallel()
-	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true)
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1002,5 +1037,125 @@ func TestPCCDetachAndInvalidateEvents(t *testing.T) {
 	}
 	if !strings.Contains(text, "lustre_client_pcc_layout_invalidations_total") {
 		t.Fatalf("missing pcc_layout_invalidations_total: %s", text)
+	}
+}
+
+func TestHistogramProcessLabelsDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, false, true)
+	slurmResolver := testSlurmResolver()
+
+	processEvent(Event{
+		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 250, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
+		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "cp", exporter, inflight, resolver, slurmResolver)
+
+	for _, familyName := range []string{
+		"lustre_client_access_duration_seconds",
+		"lustre_client_rpc_wait_duration_seconds",
+		"lustre_client_pcc_operation_duration_seconds",
+	} {
+		labelNames := labelNamesForMetricFamily(t, exporter, familyName)
+		if hasLabel(labelNames, "process") {
+			t.Fatalf("%s unexpectedly contains process label: %v", familyName, labelNames)
+		}
+		if !hasLabel(labelNames, "actor_type") {
+			t.Fatalf("%s missing actor_type label: %v", familyName, labelNames)
+		}
+	}
+}
+
+func TestHistogramProcessLabelsCanBeReEnabled(t *testing.T) {
+	t.Parallel()
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, false, true)
+	slurmResolver := testSlurmResolver()
+
+	processEvent(Event{
+		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 250, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
+		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "cp", exporter, inflight, resolver, slurmResolver)
+
+	for _, familyName := range []string{
+		"lustre_client_access_duration_seconds",
+		"lustre_client_rpc_wait_duration_seconds",
+		"lustre_client_pcc_operation_duration_seconds",
+	} {
+		labelNames := labelNamesForMetricFamily(t, exporter, familyName)
+		if !hasLabel(labelNames, "process") {
+			t.Fatalf("histogram process label was not restored for %s: %v", familyName, labelNames)
+		}
+	}
+}
+
+func TestDirectObserveDoesNotExposeDurationTotalCounters(t *testing.T) {
+	t.Parallel()
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, true, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+
+	resolver := testResolver()
+	inflight := NewInflightTracker(exporter.Inflight, false, true)
+	slurmResolver := testSlurmResolver()
+
+	processEvent(Event{
+		Plane: PlaneLLite, Op: OpWrite, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 250, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePtlRPC, Op: OpQueueWait, UID: 1001, PID: 123, Comm: "dd",
+		DurationUS: 75, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "dd", exporter, inflight, resolver, slurmResolver)
+	processEvent(Event{
+		Plane: PlanePCC, Op: OpRead, UID: 1001, PID: 123, Comm: "cp",
+		DurationUS: 100, MountPath: "/mnt/lustre", FSName: "lustrefs",
+	}, "cp", exporter, inflight, resolver, slurmResolver)
+
+	text, err := exporter.RenderText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, familyName := range []string{
+		"lustre_client_access_duration_seconds_total",
+		"lustre_client_rpc_wait_duration_seconds_total",
+		"lustre_client_pcc_operation_duration_seconds_total",
+	} {
+		if strings.Contains(text, familyName) {
+			t.Fatalf("%s should not be exposed: %s", familyName, text)
+		}
 	}
 }

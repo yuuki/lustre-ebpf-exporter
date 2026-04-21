@@ -123,7 +123,7 @@ The Prometheus metric family names are:
 - `lustre_client_pcc_detach_total`
 - `lustre_client_pcc_layout_invalidations_total`
 
-Common labels are:
+Common labels for counters and gauges are:
 
 - `fs`
 - `mount`
@@ -132,6 +132,10 @@ Common labels are:
 - `process`
 - `actor_type`
 - `slurm_job_id`
+
+Histogram families (`*_duration_seconds`) omit `process` by default to reduce
+bucket cardinality. Set `--histogram-process-labels` to keep `process` on the
+histogram family as well.
 
 Additional labels by family:
 
@@ -154,7 +158,19 @@ Label cardinality is intentionally constrained:
 ### Process Label Cardinality Control
 
 On busy Lustre clients, hundreds of distinct process names can appear, inflating metric
-cardinality. Four flags work together to keep the `process` label manageable.
+cardinality. Five flags work together to keep the `process` label manageable.
+
+#### `--histogram-process-labels` (histogram override)
+
+By default, the histogram families `lustre_client_access_duration_seconds`,
+`lustre_client_rpc_wait_duration_seconds`, and
+`lustre_client_pcc_operation_duration_seconds` do not carry the `process` label.
+This keeps `_bucket`, `_sum`, and `_count` series from multiplying by process name.
+
+```bash
+--histogram-process-labels
+# Re-enable process on histogram families
+```
 
 #### `--process-allowlist` (static filtering)
 
@@ -234,6 +250,7 @@ features operate on the normalized names. Disabled by default.
 Go CO-RE exporter:
 
 - `lustre_client_access_operations_total`
+- `lustre_client_access_duration_seconds`
 - `lustre_client_operation_errors_total` (llite VFS failures classified by errno_class; requires kretprobes)
 - `lustre_client_rpc_wait_operations_total` when the relevant optional probes are available
 - `lustre_client_rpc_wait_duration_seconds` when the relevant optional probes are available
@@ -296,6 +313,7 @@ Useful flags:
 - `--process-tail-trim-percent` (dynamically trim the bottom N% of processes by operation count; default 0 = disabled)
 - `--process-tail-trim-hysteresis` (consecutive drain cycles before trimming; default 1)
 - `--process-name-strip-suffix` (strip trailing separator+digits from process names; default `false`)
+- `--histogram-process-labels` (default `false`; when `false`, histogram families omit `process`)
 - `--uid-labels` (default `true`; when `false`, drops `uid` and `username` labels and skips kernel-side `bpf_get_current_uid_gid()` — collapsing BPF PERCPU_HASH rows across users)
 - `--web.listen-address`
 - `--web.telemetry-path`

@@ -61,6 +61,7 @@ func main() {
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
 	flag.BoolVar(&cfg.PCCEnabled, "collector.pcc", false, "Enable PCC (Persistent Client Cache) metrics collection")
 	flag.BoolVar(&cfg.UIDLabelsEnabled, "uid-labels", true, "Emit uid/username labels and key BPF counter maps per-UID; set to false to drop both labels and skip kernel-side bpf_get_current_uid_gid collection so PERCPU_HASH rows fold across users")
+	flag.BoolVar(&cfg.HistogramProcessLabelsEnabled, "histogram-process-labels", false, "Emit process label on histogram metric families; default false drops it from histogram bucket/sum/count series to reduce cardinality while keeping process-labeled counters/gauges such as operation totals")
 	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\". Takes priority over --process-tail-trim-percent")
 	flag.Float64Var(&cfg.ProcessTailTrimPercent, "process-tail-trim-percent", 0, "Dynamically trim the bottom N% of processes by operation count each drain interval (0 to disable)")
 	flag.IntVar(&cfg.ProcessTailTrimHysteresis, "process-tail-trim-hysteresis", 1, "Consecutive drain cycles a process must be in the trim set before actually trimming")
@@ -145,6 +146,11 @@ func main() {
 		log.Printf("UID labels: enabled")
 	} else {
 		log.Printf("UID labels: disabled (kernel-side uid collection bypassed)")
+	}
+	if cfg.HistogramProcessLabelsEnabled {
+		log.Printf("Histogram process labels: enabled")
+	} else {
+		log.Printf("Histogram process labels: disabled")
 	}
 	if cfg.ProcessNameStripSuffix {
 		log.Printf("Process name suffix stripping: enabled")
