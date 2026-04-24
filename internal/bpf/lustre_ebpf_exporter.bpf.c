@@ -25,8 +25,27 @@
 #define OP_SETATTR 16
 #define OP_SETXATTR 17
 #define OP_STATFS 18
+/*
+ * BPF ABI note: op codes 19-26 were used by removed PCC support and must
+ * remain reserved/unused so userspace can continue rejecting stale PCC data.
+ * Do not reuse these numeric values.
+ */
+#define OP_RESERVED_19 19
+#define OP_RESERVED_20 20
+#define OP_RESERVED_21 21
+#define OP_RESERVED_22 22
+#define OP_RESERVED_23 23
+#define OP_RESERVED_24 24
+#define OP_RESERVED_25 25
+#define OP_RESERVED_26 26
 #define PLANE_LLITE 1
 #define PLANE_PTLRPC 2
+/*
+ * BPF ABI note: plane code 3 was used by removed PCC support and must remain
+ * reserved/unused so userspace can continue rejecting stale PCC data.
+ * Do not reuse this numeric value.
+ */
+#define PLANE_RESERVED_3 3
 
 #define ACTOR_USER          0
 #define ACTOR_CLIENT_WORKER 1

@@ -10,7 +10,8 @@ import (
 const (
 	PlaneLLite  = "llite"
 	PlanePtlRPC = "ptlrpc"
-	// PlanePCC is kept only so userspace can ignore stale PCC-tagged events.
+	// PlanePCC is kept only as a legacy/reserved value; raw PCC-tagged events
+	// are rejected by parsing logic.
 	PlanePCC = "pcc"
 )
 
@@ -387,6 +388,8 @@ func planeName(raw uint8) (string, error) {
 		return PlaneLLite, nil
 	case rawPlanePtlRPC:
 		return PlanePtlRPC, nil
+	case rawPlanePCC:
+		return "", fmt.Errorf("removed PCC plane code: %d", raw)
 	default:
 		return "", fmt.Errorf("unknown plane code: %d", raw)
 	}
@@ -430,6 +433,9 @@ func opName(raw uint8) (string, error) {
 		return OpSetxattr, nil
 	case rawOpStatfs:
 		return OpStatfs, nil
+	case rawOpPCCAttach, rawOpPCCDetach, rawOpPCCInvalidate,
+		rawOpPCCRead, rawOpPCCWrite, rawOpPCCOpen, rawOpPCCLookup, rawOpPCCFsync:
+		return "", fmt.Errorf("removed PCC op code: %d", raw)
 	default:
 		return "", fmt.Errorf("unknown op code: %d", raw)
 	}

@@ -230,13 +230,14 @@ Go CO-RE exporter:
 
 - `lustre_client_access_operations_total`
 - `lustre_client_access_duration_seconds`
+- `lustre_client_data_bytes_total`
 - `lustre_client_operation_errors_total` (llite VFS failures classified by errno_class; requires kretprobes)
 - `lustre_client_rpc_wait_operations_total` when the relevant optional probes are available
 - `lustre_client_rpc_wait_duration_seconds` when the relevant optional probes are available
 - `lustre_client_rpc_errors_total` when the relevant optional probes are available (`ptlrpc_resend_req`, `ptlrpc_restart_req`, `ptlrpc_expire_one_request`, `ptlrpc_request_handle_notconn`)
 - `lustre_client_inflight_requests` when request lifecycle probes are available
 
-The legacy Python exporter emits all six families; see [`legacy/`](legacy/README.md).
+The legacy Python exporter has its own metric coverage; see [`legacy/`](legacy/README.md).
 
 The Go exporter registers all Prometheus families, but the current aggregator only emits the
 families that it can populate meaningfully.

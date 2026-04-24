@@ -810,6 +810,8 @@ func TestPlaneNameRejectsRemovedPCC(t *testing.T) {
 	t.Parallel()
 	if _, err := planeName(rawPlanePCC); err == nil {
 		t.Fatalf("expected raw PCC plane %d to be rejected", rawPlanePCC)
+	} else if !strings.Contains(err.Error(), "removed PCC plane code") {
+		t.Fatalf("expected removed PCC plane error, got %v", err)
 	}
 }
 
@@ -827,6 +829,8 @@ func TestOpNameRejectsRemovedPCCCodes(t *testing.T) {
 	} {
 		if _, err := opName(raw); err == nil {
 			t.Fatalf("expected raw PCC op %d to be rejected", raw)
+		} else if !strings.Contains(err.Error(), "removed PCC op code") {
+			t.Fatalf("expected removed PCC op error, got %v", err)
 		}
 	}
 }
