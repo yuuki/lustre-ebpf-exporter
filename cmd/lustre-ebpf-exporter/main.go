@@ -59,7 +59,6 @@ func main() {
 	flag.IntVar(&slurmNegativeTTLSeconds, "slurm-jobid-negative-ttl", 5, "Cache TTL in seconds for a negative (unresolved) Slurm job id lookup")
 	flag.IntVar(&slurmVerifyTTLSeconds, "slurm-jobid-verify-ttl", 1, "Grace period in seconds before re-checking /proc/<pid>/stat for pid reuse")
 	flag.IntVar(&cfg.SlurmJobIDCacheSize, "slurm-jobid-cache-size", 8192, "Maximum number of cached pid entries for Slurm job id resolution")
-	flag.BoolVar(&cfg.PCCEnabled, "collector.pcc", false, "Enable PCC (Persistent Client Cache) metrics collection")
 	flag.BoolVar(&cfg.UIDLabelsEnabled, "uid-labels", true, "Emit uid/username labels and key BPF counter maps per-UID; set to false to drop both labels and skip kernel-side bpf_get_current_uid_gid collection so PERCPU_HASH rows fold across users")
 	flag.BoolVar(&cfg.HistogramProcessLabelsEnabled, "histogram-process-labels", false, "Emit process label on histogram metric families; default false drops it from histogram bucket/sum/count series to reduce cardinality while keeping process-labeled counters/gauges such as operation totals")
 	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\". Takes priority over --process-tail-trim-percent")
@@ -136,11 +135,6 @@ func main() {
 			cfg.SlurmJobIDTTL, cfg.SlurmJobIDNegativeTTL, cfg.SlurmJobIDVerifyTTL, cfg.SlurmJobIDCacheSize)
 	} else {
 		log.Printf("Slurm job id resolution: disabled (label emitted as empty string)")
-	}
-	if cfg.PCCEnabled {
-		log.Printf("PCC metrics: enabled")
-	} else {
-		log.Printf("PCC metrics: disabled")
 	}
 	if cfg.UIDLabelsEnabled {
 		log.Printf("UID labels: enabled")

@@ -38,11 +38,10 @@ bash ./e2e/lima/scripts/verify-observer.sh        # legacy Python (second-class)
 
 ### Observation Model (shared by both implementations)
 
-Three planes of observation with identical semantic contracts:
+Two planes of observation with identical semantic contracts:
 
 1. **llite** — user-facing workload plane: required kprobes on `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`, `ll_file_write_iter`, `ll_fsync` plus optional kprobe+kretprobe pairs on `ll_file_release` (close), `ll_getattr`, `ll_xattr_get_common` (getxattr), `ll_xattr_set_common` (setxattr), `ll_mkdir`, `ll_mknod`, `ll_rename`, `ll_rmdir`, `ll_setattr`, `ll_statfs`. Each op is classified by `lustre.access.intent`: `namespace_read`, `namespace_mutation`, `data_read`, `data_write`, `sync`. The metadata kprobe group assumes Linux 5.12+ idmapped-mount inode_operation signatures (PARM2 holds inode/dentry/path); on older kernels the symbols still attach but `s_dev` extraction may fail and emit nothing. All metadata probes are optional and degrade gracefully.
 2. **PtlRPC** — client-internal impact plane: optional kprobes on `ptlrpc_queue_wait`, `ptlrpc_send_new_req`, `__ptlrpc_free_req`. Degrades gracefully when probes are missing.
-3. **PCC** — persistent client cache plane: optional kprobes on `pcc_file_read_iter`, `pcc_file_write_iter`, `pcc_file_open`, `pcc_lookup`, `pcc_fsync` (I/O activity) and `pcc_ioctl_attach`, `pcc_ioctl_detach`, `pcc_try_auto_attach`, `pcc_try_readonly_open_attach`, `pcc_layout_invalidate` (lifecycle). PCC I/O ops use dedicated BPF op codes (OP\_PCC\_READ=22, etc.) to avoid inflight\_map key collisions with llite ops, since `ll_file_read_iter` calls `pcc_file_read_iter` internally. All PCC probes degrade gracefully when the PCC module is not loaded.
 
 Actors are classified as `user`, `batch_job` (slurm/pbs/sge/lsf), `system_daemon`, or `client_worker` (ptlrpcd\_\*).
 

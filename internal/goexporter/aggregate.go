@@ -115,13 +115,6 @@ func ptlrpcHistogramLabelValues(fsName, mountPath, op, uid, username, comm, acto
 	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
 }
 
-func pccAttachLabelValues(fsName, mountPath, mode, trigger, uid, username, comm, actorType, slurmJobID string, slurmEnabled, uidEnabled bool) []string {
-	vals := []string{fsName, mountPath, mode, trigger}
-	vals = appendUIDValues(vals, uid, username, uidEnabled)
-	vals = append(vals, comm, actorType)
-	return appendSlurmValue(vals, slurmJobID, slurmEnabled)
-}
-
 // labelKeySep is used to join positional label values into a cache key.
 // Null bytes cannot legitimately appear inside label values sourced from
 // /proc, sanitized comms, or numeric ids, so collisions are impossible as

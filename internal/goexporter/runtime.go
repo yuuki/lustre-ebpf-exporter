@@ -18,7 +18,6 @@ type EventSource interface {
 	Events() <-chan Event
 	CounterMaps() (llite, rpc *ebpf.Map)
 	ErrorCounterMaps() (lliteErrors, rpcErrors *ebpf.Map)
-	PccCounterMaps() (pcc, pccErrors *ebpf.Map)
 	Close() error
 }
 
@@ -48,14 +47,10 @@ func Run(ctx context.Context, cfg Config) error {
 
 	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
-	var pccMap, pccErrorMap *ebpf.Map
-	if cfg.PCCEnabled {
-		pccMap, pccErrorMap = source.PccCounterMaps()
-	}
-	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, pccMap, pccErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
+	counterCollector := NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap, mountInfos, resolver, slurmResolver, processFilter, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 	counterCollector.StartDrain(ctx, cfg.DrainInterval)
 
-	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.PCCEnabled, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled, cfg.HistogramProcessLabelsEnabled)
+	exporter, err := NewPrometheusExporter(cfg.WebListenAddress, cfg.WebTelemetryPath, counterCollector, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled, cfg.HistogramProcessLabelsEnabled)
 	if err != nil {
 		return err
 	}
@@ -123,14 +118,6 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 		return
 	}
 
-	if event.Plane == PlanePCC {
-		if !exporter.PCCEnabled {
-			return
-		}
-		processPCCEvent(event, rawComm, exporter, resolver, slurmResolver)
-		return
-	}
-
 	if event.Plane != PlanePtlRPC {
 		return
 	}
@@ -159,38 +146,6 @@ func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inf
 	labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
 	counter.WithLabelValues(labels...).Inc()
 	inflight.Update(delta, event, uid, username, actorType, slurmJobID)
-}
-
-func processPCCEvent(event Event, rawComm string, exporter *PrometheusExporter, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
-	uid, username, actorType, slurmJobID := resolveEventIdentity(event, rawComm, resolver, slurmResolver, exporter.UIDEnabled)
-
-	switch event.Op {
-	case OpRead, OpWrite, OpOpen, OpLookup, OpFsync:
-		// Phase 1: PCC I/O histogram.
-		intent := AccessIntentForOp(event.Op)
-		if intent == "" || event.DurationUS == 0 {
-			return
-		}
-		exporter.PCCLatency.WithLabelValues(
-			lliteHistogramLabelValues(event.FSName, event.MountPath, intent, event.Op, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled, exporter.HistogramProcessLabelsEnabled)...,
-		).Observe(float64(event.DurationUS) / 1_000_000.0)
-
-	case OpPCCAttach:
-		mode, trigger := DecodePCCAttachInfo(event.RequestPtr)
-		attachVals := pccAttachLabelValues(event.FSName, event.MountPath, mode, trigger, uid, username, event.Comm, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
-		exporter.PCCAttachTotal.WithLabelValues(attachVals...).Inc()
-		if event.ErrnoClass != "" {
-			exporter.PCCAttachFailuresTotal.WithLabelValues(attachVals...).Inc()
-		}
-
-	case OpPCCDetach:
-		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
-		exporter.PCCDetachTotal.WithLabelValues(labels...).Inc()
-
-	case OpPCCInvalidate:
-		labels := baseLabelValues(event, uid, username, actorType, slurmJobID, exporter.SlurmEnabled, exporter.UIDEnabled)
-		exporter.PCCInvalidationsTotal.WithLabelValues(labels...).Inc()
-	}
 }
 
 // resolveEventIdentity resolves identity labels for an event. rawComm is

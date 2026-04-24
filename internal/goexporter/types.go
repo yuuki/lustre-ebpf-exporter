@@ -10,7 +10,9 @@ import (
 const (
 	PlaneLLite  = "llite"
 	PlanePtlRPC = "ptlrpc"
-	PlanePCC    = "pcc"
+	// PlanePCC is kept only as a legacy/reserved value; raw PCC-tagged events
+	// are rejected by parsing logic.
+	PlanePCC = "pcc"
 )
 
 const (
@@ -36,8 +38,7 @@ const (
 	rawOpSetxattr   uint8 = 17
 	rawOpStatfs     uint8 = 18
 
-	// PCC-specific op codes (19-26). I/O ops map to the same Go-side op
-	// strings as their llite counterparts; the plane label discriminates.
+	// Removed PCC op codes kept reserved so stale raw events are rejected.
 	rawOpPCCAttach     uint8 = 19
 	rawOpPCCDetach     uint8 = 20
 	rawOpPCCInvalidate uint8 = 21
@@ -68,24 +69,6 @@ const (
 	OpSetattr    = "setattr"
 	OpSetxattr   = "setxattr"
 	OpStatfs     = "statfs"
-
-	// PCC lifecycle ops (no llite equivalent).
-	OpPCCAttach     = "pcc_attach"
-	OpPCCDetach     = "pcc_detach"
-	OpPCCInvalidate = "pcc_invalidate"
-
-	// PCC attach mode / trigger labels.
-	PCCModeRO        = "ro"
-	PCCModeRW        = "rw"
-	PCCTriggerManual = "manual"
-	PCCTriggerAuto   = "auto"
-
-	// Raw PCC mode/trigger values packed by BPF into request_ptr.
-	// Must match PCC_MODE_* / PCC_TRIGGER_* in lustre_ebpf_exporter.bpf.c.
-	rawPCCModeRO        uint8 = 1
-	rawPCCModeRW        uint8 = 2
-	rawPCCTriggerManual uint8 = 1
-	rawPCCTriggerAuto   uint8 = 2
 )
 
 const (
@@ -266,9 +249,6 @@ var (
 		OpSetxattr: IntentNamespaceMutation,
 		OpRead:     IntentDataRead, OpWrite: IntentDataWrite,
 		OpFsync: IntentSync,
-		// PCC lifecycle ops.
-		OpPCCAttach: IntentNamespaceMutation, OpPCCDetach: IntentNamespaceMutation,
-		OpPCCInvalidate: IntentNamespaceMutation,
 	}
 	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
 	DaemonNames      = map[string]struct{}{
@@ -310,11 +290,6 @@ type Config struct {
 	SlurmJobIDVerifyTTL time.Duration
 	// SlurmJobIDCacheSize bounds the number of cached pids.
 	SlurmJobIDCacheSize int
-
-	// PCCEnabled turns on PCC (Persistent Client Cache) metrics collection.
-	// When false (default), PCC kprobes are not attached and PCC metrics
-	// are not registered.
-	PCCEnabled bool
 
 	// ProcessAllowlist is a static list of process names that pass through
 	// as-is; all others are replaced with "other". When set, it takes
@@ -414,7 +389,7 @@ func planeName(raw uint8) (string, error) {
 	case rawPlanePtlRPC:
 		return PlanePtlRPC, nil
 	case rawPlanePCC:
-		return PlanePCC, nil
+		return "", fmt.Errorf("removed PCC plane code: %d", raw)
 	default:
 		return "", fmt.Errorf("unknown plane code: %d", raw)
 	}
@@ -458,50 +433,10 @@ func opName(raw uint8) (string, error) {
 		return OpSetxattr, nil
 	case rawOpStatfs:
 		return OpStatfs, nil
-	// PCC I/O ops normalise to the same strings as llite ops.
-	case rawOpPCCRead:
-		return OpRead, nil
-	case rawOpPCCWrite:
-		return OpWrite, nil
-	case rawOpPCCOpen:
-		return OpOpen, nil
-	case rawOpPCCLookup:
-		return OpLookup, nil
-	case rawOpPCCFsync:
-		return OpFsync, nil
-	// PCC lifecycle ops.
-	case rawOpPCCAttach:
-		return OpPCCAttach, nil
-	case rawOpPCCDetach:
-		return OpPCCDetach, nil
-	case rawOpPCCInvalidate:
-		return OpPCCInvalidate, nil
+	case rawOpPCCAttach, rawOpPCCDetach, rawOpPCCInvalidate,
+		rawOpPCCRead, rawOpPCCWrite, rawOpPCCOpen, rawOpPCCLookup, rawOpPCCFsync:
+		return "", fmt.Errorf("removed PCC op code: %d", raw)
 	default:
 		return "", fmt.Errorf("unknown op code: %d", raw)
 	}
-}
-
-// DecodePCCAttachInfo extracts mode and trigger from the request_ptr field
-// of a PCC attach/detach observer_event. The BPF side packs them as
-// (mode << 8) | trigger.
-func DecodePCCAttachInfo(requestPtr uint64) (mode, trigger string) {
-	rawMode := uint8(requestPtr >> 8)
-	rawTrigger := uint8(requestPtr & 0xFF)
-	switch rawMode {
-	case rawPCCModeRO:
-		mode = PCCModeRO
-	case rawPCCModeRW:
-		mode = PCCModeRW
-	default:
-		mode = "unknown"
-	}
-	switch rawTrigger {
-	case rawPCCTriggerManual:
-		trigger = PCCTriggerManual
-	case rawPCCTriggerAuto:
-		trigger = PCCTriggerAuto
-	default:
-		trigger = "unknown"
-	}
-	return
 }
