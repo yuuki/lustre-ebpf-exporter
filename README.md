@@ -63,7 +63,7 @@ The design intentionally separates two planes:
 The `access_intent` label classifies operations into:
 
 - `namespace_read`: `lookup`, `open`, `close`, `getattr`, `getxattr`, `listxattr`, `get_acl`, `readlink`, `readdir`, `statfs`
-- `namespace_mutation`: `create`, `mkdir`, `mknod`, `unlink`, `rmdir`, `rename`, `link`, `symlink`, `setattr`, `setxattr`, `set_acl`
+- `namespace_mutation`: `create`, `mkdir`, `mknod`, `unlink`, `rmdir`, `rename`, `link`, `symlink`, `setattr`, `setxattr`
 - `data_read`: `read`
 - `data_write`: `write`
 - `sync`: `fsync`

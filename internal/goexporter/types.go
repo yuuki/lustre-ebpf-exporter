@@ -54,9 +54,8 @@ const (
 	rawOpCreate    uint8 = 30
 	rawOpListxattr uint8 = 31
 	rawOpGetACL    uint8 = 32
-	rawOpSetACL    uint8 = 33
-	rawOpReadlink  uint8 = 34
-	rawOpReaddir   uint8 = 35
+	rawOpReadlink  uint8 = 33
+	rawOpReaddir   uint8 = 34
 )
 
 const (
@@ -84,7 +83,6 @@ const (
 	OpCreate     = "create"
 	OpListxattr  = "listxattr"
 	OpGetACL     = "get_acl"
-	OpSetACL     = "set_acl"
 	OpReadlink   = "readlink"
 	OpReaddir    = "readdir"
 )
@@ -268,8 +266,7 @@ var (
 		OpMknod: IntentNamespaceMutation, OpSetattr: IntentNamespaceMutation,
 		OpSetxattr: IntentNamespaceMutation, OpLink: IntentNamespaceMutation,
 		OpSymlink: IntentNamespaceMutation, OpCreate: IntentNamespaceMutation,
-		OpSetACL: IntentNamespaceMutation,
-		OpRead:   IntentDataRead, OpWrite: IntentDataWrite,
+		OpRead: IntentDataRead, OpWrite: IntentDataWrite,
 		OpFsync: IntentSync,
 	}
 	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
@@ -468,8 +465,6 @@ func opName(raw uint8) (string, error) {
 		return OpListxattr, nil
 	case rawOpGetACL:
 		return OpGetACL, nil
-	case rawOpSetACL:
-		return OpSetACL, nil
 	case rawOpReadlink:
 		return OpReadlink, nil
 	case rawOpReaddir:

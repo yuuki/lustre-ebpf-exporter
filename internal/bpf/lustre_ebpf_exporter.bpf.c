@@ -44,9 +44,8 @@
 #define OP_CREATE 30
 #define OP_LISTXATTR 31
 #define OP_GETACL 32
-#define OP_SETACL 33
-#define OP_READLINK 34
-#define OP_READDIR 35
+#define OP_READLINK 33
+#define OP_READDIR 34
 #define PLANE_LLITE 1
 #define PLANE_PTLRPC 2
 /*
@@ -318,7 +317,7 @@ static __always_inline __u8 intent_for_op(__u8 op) {
     return INTENT_NAMESPACE_READ;
   case OP_MKDIR: case OP_MKNOD: case OP_RENAME: case OP_RMDIR:
   case OP_SETATTR: case OP_SETXATTR: case OP_UNLINK: case OP_LINK:
-  case OP_SYMLINK: case OP_CREATE: case OP_SETACL:
+  case OP_SYMLINK: case OP_CREATE:
     return INTENT_NAMESPACE_MUTATION;
   case OP_READ:  return INTENT_DATA_READ;
   case OP_WRITE: return INTENT_DATA_WRITE;
@@ -786,7 +785,7 @@ int ll_getxattr_wrapper_exit(struct pt_regs *ctx) {
 
 SEC("kprobe/ll_xattr_set")
 int ll_setxattr_wrapper_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
+  struct inode *inode = (struct inode *)PT_REGS_PARM4(ctx);
   __u32 s_dev = 0;
   if (!read_inode_dev(inode, &s_dev)) {
     return 0;
@@ -816,6 +815,12 @@ int ll_mkdir_exit(struct pt_regs *ctx) {
 
 SEC("kprobe/ll_mknod")
 int ll_mknod_enter(struct pt_regs *ctx) {
+  __u64 tid = current_tid();
+  struct inflight_key create_key = {.tid = tid, .op = OP_CREATE};
+  if (bpf_map_lookup_elem(&inflight_map, &create_key)) {
+    return 0;
+  }
+
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
   __u32 s_dev = 0;
   if (!read_inode_dev(inode, &s_dev)) {
@@ -964,21 +969,6 @@ int ll_listxattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, OP_LISTXATTR, PT_REGS_RC(ctx), 0);
 }
 
-SEC("kprobe/ll_get_acl")
-int ll_get_acl_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
-  __u32 s_dev = 0;
-  if (!read_inode_dev(inode, &s_dev)) {
-    return 0;
-  }
-  return track_llite_enter(OP_GETACL, s_dev);
-}
-
-SEC("kretprobe/ll_get_acl")
-int ll_get_acl_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_GETACL, PT_REGS_RC(ctx), 0);
-}
-
 SEC("kprobe/ll_get_inode_acl")
 int ll_get_inode_acl_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
@@ -994,21 +984,6 @@ int ll_get_inode_acl_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, OP_GETACL, PT_REGS_RC(ctx), 0);
 }
 
-SEC("kprobe/ll_set_acl")
-int ll_set_acl_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
-  __u32 s_dev = 0;
-  if (!read_inode_dev(inode, &s_dev)) {
-    return 0;
-  }
-  return track_llite_enter(OP_SETACL, s_dev);
-}
-
-SEC("kretprobe/ll_set_acl")
-int ll_set_acl_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_SETACL, PT_REGS_RC(ctx), 0);
-}
-
 SEC("kprobe/ll_get_link")
 int ll_get_link_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
@@ -1021,7 +996,7 @@ int ll_get_link_enter(struct pt_regs *ctx) {
 
 SEC("kretprobe/ll_get_link")
 int ll_get_link_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_READLINK, 0, 0);
+  return finish_llite_op(ctx, OP_READLINK, PT_REGS_RC(ctx), 0);
 }
 
 SEC("kprobe/ll_iterate")
