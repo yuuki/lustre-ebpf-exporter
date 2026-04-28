@@ -21,9 +21,12 @@ EXPORTER_BIN ?= $(DIST_DIR)/lustre-ebpf-exporter
 DOCKER_BUILDER_IMAGE ?= lustre-ebpf-exporter-go-builder
 DOCKERFILE_GO_EXPORTER ?= build/docker/go-exporter.Dockerfile
 
+# GOOS= GOARCH= keep the bpf2go host binary (compiled by `go run`) at the
+# runner's native arch even when GOARCH is set for the BPF target arch
+# selection downstream.
 .PHONY: generate-go-exporter
 generate-go-exporter:
-	cd internal/bpf && $(BPF2GO) -cc $(BPF_CLANG) -strip $(BPF2GO_STRIP) -target $(GOARCH) -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- $(BPF_CFLAGS)
+	cd internal/bpf && GOOS= GOARCH= $(BPF2GO) -cc $(BPF_CLANG) -strip $(BPF2GO_STRIP) -target $(GOARCH) -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- $(BPF_CFLAGS)
 
 # Each goarch picks up the embedded .o tagged for it via //go:build amd64 vs
 # //go:build arm64, so both must be regenerated before a multi-arch build.
