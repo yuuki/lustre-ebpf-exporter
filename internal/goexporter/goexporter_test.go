@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -995,6 +996,25 @@ func TestDirectObserveDoesNotExposeDurationTotalCounters(t *testing.T) {
 	} {
 		if strings.Contains(text, familyName) {
 			t.Fatalf("%s should not be exposed: %s", familyName, text)
+		}
+	}
+}
+
+func TestPrometheusLatencyBucketsAreCompactTwelveBucketLayout(t *testing.T) {
+	t.Parallel()
+
+	got := PrometheusLatencyBucketsSeconds
+	want := []float64{
+		1e-5, 5e-5, 2.5e-4, 1e-3,
+		2.5e-3, 1e-2, 2.5e-2, 1e-1,
+		2.5e-1, 1.0, 2.5, 10.0,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("bucket layout = %v, want %v", got, want)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i] <= got[i-1] {
+			t.Fatalf("buckets must be strictly increasing: index %d = %g after %g", i, got[i], got[i-1])
 		}
 	}
 }
