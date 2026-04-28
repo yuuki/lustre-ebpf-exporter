@@ -30,19 +30,23 @@ jobs:
         run: |
           set -eux
           sudo dpkg --add-architecture arm64
-          # The default mirrors for ubuntu-latest do not carry arm64 ports,
-          # so restrict them to amd64/i386 and add ports.ubuntu.com for
-          # arm64. Handle both legacy one-line apt sources (Ubuntu 22.04
-          # and earlier) and deb822 sources (Ubuntu 24.04+).
+          # The default ubuntu mirrors on ubuntu-latest do not carry arm64
+          # ports, so restrict them to amd64/i386 and add ports.ubuntu.com
+          # for arm64. Skip files whose entries already declare an arch
+          # (third-party repos like microsoft-prod.list) to avoid double
+          # injection; only ubuntu's own sources need rewriting.
           for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
             [ -f "$f" ] || continue
+            grep -Eq '^deb (\[|cdrom)' "$f" && continue
             sudo sed -i 's/^deb /deb [arch=amd64,i386] /' "$f"
           done
-          for f in /etc/apt/sources.list.d/*.sources; do
-            [ -f "$f" ] || continue
-            grep -q '^Architectures:' "$f" || \
-              sudo sed -i '/^Types:/a Architectures: amd64 i386' "$f"
-          done
+          # Ubuntu 24.04+ ships /etc/apt/sources.list.d/ubuntu.sources in
+          # deb822 format. Only inject Architectures there; third-party
+          # deb822 files are left alone.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ] \
+              && ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
+            sudo sed -i '/^Types:/a Architectures: amd64 i386' /etc/apt/sources.list.d/ubuntu.sources
+          fi
           codename="$(lsb_release -cs)"
           sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null <<EOF
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${codename} main restricted universe multiverse
