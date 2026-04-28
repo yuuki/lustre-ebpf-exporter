@@ -768,36 +768,6 @@ int ll_setxattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, OP_SETXATTR, PT_REGS_RC(ctx), 0);
 }
 
-SEC("kprobe/ll_xattr_get")
-int ll_getxattr_wrapper_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
-  __u32 s_dev = 0;
-  if (!read_inode_dev(inode, &s_dev)) {
-    return 0;
-  }
-  return track_llite_enter(OP_GETXATTR, s_dev);
-}
-
-SEC("kretprobe/ll_xattr_get")
-int ll_getxattr_wrapper_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_GETXATTR, PT_REGS_RC(ctx), 0);
-}
-
-SEC("kprobe/ll_xattr_set")
-int ll_setxattr_wrapper_enter(struct pt_regs *ctx) {
-  struct inode *inode = (struct inode *)PT_REGS_PARM4(ctx);
-  __u32 s_dev = 0;
-  if (!read_inode_dev(inode, &s_dev)) {
-    return 0;
-  }
-  return track_llite_enter(OP_SETXATTR, s_dev);
-}
-
-SEC("kretprobe/ll_xattr_set")
-int ll_setxattr_wrapper_exit(struct pt_regs *ctx) {
-  return finish_llite_op(ctx, OP_SETXATTR, PT_REGS_RC(ctx), 0);
-}
-
 SEC("kprobe/ll_mkdir")
 int ll_mkdir_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
@@ -911,6 +881,8 @@ int ll_create_nd_exit(struct pt_regs *ctx) {
 
 SEC("kprobe/ll_unlink")
 int ll_unlink_enter(struct pt_regs *ctx) {
+  /* ll_unlink keeps the legacy inode_operation signature in current Lustre:
+   * PARM1 is the parent inode, unlike idmapped mkdir/create-style probes. */
   struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
   __u32 s_dev = 0;
   if (!read_inode_dev(inode, &s_dev)) {
