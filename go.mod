@@ -2,7 +2,7 @@ module github.com/yuuki/lustre-ebpf-exporter
 
 go 1.26.0
 
-toolchain go1.26.1
+toolchain go1.26.2
 
 require (
 	github.com/cilium/ebpf v0.21.0
