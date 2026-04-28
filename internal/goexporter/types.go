@@ -47,6 +47,16 @@ const (
 	rawOpPCCOpen       uint8 = 24
 	rawOpPCCLookup     uint8 = 25
 	rawOpPCCFsync      uint8 = 26
+
+	rawOpUnlink    uint8 = 27
+	rawOpLink      uint8 = 28
+	rawOpSymlink   uint8 = 29
+	rawOpCreate    uint8 = 30
+	rawOpListxattr uint8 = 31
+	rawOpGetACL    uint8 = 32
+	rawOpSetACL    uint8 = 33
+	rawOpReadlink  uint8 = 34
+	rawOpReaddir   uint8 = 35
 )
 
 const (
@@ -69,6 +79,14 @@ const (
 	OpSetattr    = "setattr"
 	OpSetxattr   = "setxattr"
 	OpStatfs     = "statfs"
+	OpLink       = "link"
+	OpSymlink    = "symlink"
+	OpCreate     = "create"
+	OpListxattr  = "listxattr"
+	OpGetACL     = "get_acl"
+	OpSetACL     = "set_acl"
+	OpReadlink   = "readlink"
+	OpReaddir    = "readdir"
 )
 
 const (
@@ -243,11 +261,15 @@ var (
 		OpLookup: IntentNamespaceRead, OpOpen: IntentNamespaceRead,
 		OpClose: IntentNamespaceRead, OpGetattr: IntentNamespaceRead,
 		OpGetxattr: IntentNamespaceRead, OpStatfs: IntentNamespaceRead,
+		OpListxattr: IntentNamespaceRead, OpGetACL: IntentNamespaceRead,
+		OpReadlink: IntentNamespaceRead, OpReaddir: IntentNamespaceRead,
 		OpRename: IntentNamespaceMutation, OpUnlink: IntentNamespaceMutation,
 		OpMkdir: IntentNamespaceMutation, OpRmdir: IntentNamespaceMutation,
 		OpMknod: IntentNamespaceMutation, OpSetattr: IntentNamespaceMutation,
-		OpSetxattr: IntentNamespaceMutation,
-		OpRead:     IntentDataRead, OpWrite: IntentDataWrite,
+		OpSetxattr: IntentNamespaceMutation, OpLink: IntentNamespaceMutation,
+		OpSymlink: IntentNamespaceMutation, OpCreate: IntentNamespaceMutation,
+		OpSetACL: IntentNamespaceMutation,
+		OpRead:   IntentDataRead, OpWrite: IntentDataWrite,
 		OpFsync: IntentSync,
 	}
 	BatchJobPrefixes = []string{"slurm", "pbs_", "sge_", "lsf_"}
@@ -434,6 +456,24 @@ func opName(raw uint8) (string, error) {
 		return OpSetxattr, nil
 	case rawOpStatfs:
 		return OpStatfs, nil
+	case rawOpUnlink:
+		return OpUnlink, nil
+	case rawOpLink:
+		return OpLink, nil
+	case rawOpSymlink:
+		return OpSymlink, nil
+	case rawOpCreate:
+		return OpCreate, nil
+	case rawOpListxattr:
+		return OpListxattr, nil
+	case rawOpGetACL:
+		return OpGetACL, nil
+	case rawOpSetACL:
+		return OpSetACL, nil
+	case rawOpReadlink:
+		return OpReadlink, nil
+	case rawOpReaddir:
+		return OpReaddir, nil
 	case rawOpPCCAttach, rawOpPCCDetach, rawOpPCCInvalidate,
 		rawOpPCCRead, rawOpPCCWrite, rawOpPCCOpen, rawOpPCCLookup, rawOpPCCFsync:
 		return "", fmt.Errorf("removed PCC op code: %d", raw)

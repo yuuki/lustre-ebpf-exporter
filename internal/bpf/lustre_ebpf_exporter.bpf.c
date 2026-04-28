@@ -38,6 +38,15 @@
 #define OP_RESERVED_24 24
 #define OP_RESERVED_25 25
 #define OP_RESERVED_26 26
+#define OP_UNLINK 27
+#define OP_LINK 28
+#define OP_SYMLINK 29
+#define OP_CREATE 30
+#define OP_LISTXATTR 31
+#define OP_GETACL 32
+#define OP_SETACL 33
+#define OP_READLINK 34
+#define OP_READDIR 35
 #define PLANE_LLITE 1
 #define PLANE_PTLRPC 2
 /*
@@ -305,9 +314,11 @@ static __always_inline __u8 intent_for_op(__u8 op) {
   switch (op) {
   case OP_LOOKUP: case OP_OPEN:
   case OP_CLOSE: case OP_GETATTR: case OP_GETXATTR: case OP_STATFS:
+  case OP_LISTXATTR: case OP_GETACL: case OP_READLINK: case OP_READDIR:
     return INTENT_NAMESPACE_READ;
   case OP_MKDIR: case OP_MKNOD: case OP_RENAME: case OP_RMDIR:
-  case OP_SETATTR: case OP_SETXATTR:
+  case OP_SETATTR: case OP_SETXATTR: case OP_UNLINK: case OP_LINK:
+  case OP_SYMLINK: case OP_CREATE: case OP_SETACL:
     return INTENT_NAMESPACE_MUTATION;
   case OP_READ:  return INTENT_DATA_READ;
   case OP_WRITE: return INTENT_DATA_WRITE;
@@ -758,6 +769,36 @@ int ll_setxattr_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, OP_SETXATTR, PT_REGS_RC(ctx), 0);
 }
 
+SEC("kprobe/ll_xattr_get")
+int ll_getxattr_wrapper_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_GETXATTR, s_dev);
+}
+
+SEC("kretprobe/ll_xattr_get")
+int ll_getxattr_wrapper_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_GETXATTR, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_xattr_set")
+int ll_setxattr_wrapper_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM3(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_SETXATTR, s_dev);
+}
+
+SEC("kretprobe/ll_xattr_set")
+int ll_setxattr_wrapper_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_SETXATTR, PT_REGS_RC(ctx), 0);
+}
+
 SEC("kprobe/ll_mkdir")
 int ll_mkdir_enter(struct pt_regs *ctx) {
   struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
@@ -846,6 +887,156 @@ int ll_statfs_enter(struct pt_regs *ctx) {
 SEC("kretprobe/ll_statfs")
 int ll_statfs_exit(struct pt_regs *ctx) {
   return finish_llite_op(ctx, OP_STATFS, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_create_nd")
+int ll_create_nd_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_CREATE, s_dev);
+}
+
+SEC("kretprobe/ll_create_nd")
+int ll_create_nd_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_CREATE, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_unlink")
+int ll_unlink_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_UNLINK, s_dev);
+}
+
+SEC("kretprobe/ll_unlink")
+int ll_unlink_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_UNLINK, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_link")
+int ll_link_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_LINK, s_dev);
+}
+
+SEC("kretprobe/ll_link")
+int ll_link_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_LINK, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_symlink")
+int ll_symlink_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_SYMLINK, s_dev);
+}
+
+SEC("kretprobe/ll_symlink")
+int ll_symlink_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_SYMLINK, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_listxattr")
+int ll_listxattr_enter(struct pt_regs *ctx) {
+  struct dentry *dentry = (struct dentry *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_dentry_dev(dentry, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_LISTXATTR, s_dev);
+}
+
+SEC("kretprobe/ll_listxattr")
+int ll_listxattr_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_LISTXATTR, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_get_acl")
+int ll_get_acl_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_GETACL, s_dev);
+}
+
+SEC("kretprobe/ll_get_acl")
+int ll_get_acl_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_GETACL, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_get_inode_acl")
+int ll_get_inode_acl_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_GETACL, s_dev);
+}
+
+SEC("kretprobe/ll_get_inode_acl")
+int ll_get_inode_acl_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_GETACL, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_set_acl")
+int ll_set_acl_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_SETACL, s_dev);
+}
+
+SEC("kretprobe/ll_set_acl")
+int ll_set_acl_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_SETACL, PT_REGS_RC(ctx), 0);
+}
+
+SEC("kprobe/ll_get_link")
+int ll_get_link_enter(struct pt_regs *ctx) {
+  struct inode *inode = (struct inode *)PT_REGS_PARM2(ctx);
+  __u32 s_dev = 0;
+  if (!read_inode_dev(inode, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_READLINK, s_dev);
+}
+
+SEC("kretprobe/ll_get_link")
+int ll_get_link_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_READLINK, 0, 0);
+}
+
+SEC("kprobe/ll_iterate")
+int ll_iterate_enter(struct pt_regs *ctx) {
+  struct file *file = (struct file *)PT_REGS_PARM1(ctx);
+  __u32 s_dev = 0;
+  if (!read_file_dev(file, &s_dev)) {
+    return 0;
+  }
+  return track_llite_enter(OP_READDIR, s_dev);
+}
+
+SEC("kretprobe/ll_iterate")
+int ll_iterate_exit(struct pt_regs *ctx) {
+  return finish_llite_op(ctx, OP_READDIR, PT_REGS_RC(ctx), 0);
 }
 
 /*

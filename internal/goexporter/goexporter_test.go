@@ -71,13 +71,13 @@ func TestAccessIntentForOp(t *testing.T) {
 		t.Fatalf("expected empty intent, got %q", got)
 	}
 
-	namespaceReads := []string{OpClose, OpGetattr, OpGetxattr, OpStatfs}
+	namespaceReads := []string{OpClose, OpGetattr, OpGetxattr, OpStatfs, OpListxattr, OpGetACL, OpReadlink, OpReaddir}
 	for _, op := range namespaceReads {
 		if got := AccessIntentForOp(op); got != IntentNamespaceRead {
 			t.Fatalf("op %q: expected %q, got %q", op, IntentNamespaceRead, got)
 		}
 	}
-	namespaceMutations := []string{OpMkdir, OpMknod, OpRename, OpRmdir, OpSetattr, OpSetxattr, OpUnlink}
+	namespaceMutations := []string{OpMkdir, OpMknod, OpRename, OpRmdir, OpSetattr, OpSetxattr, OpUnlink, OpLink, OpSymlink, OpCreate, OpSetACL}
 	for _, op := range namespaceMutations {
 		if got := AccessIntentForOp(op); got != IntentNamespaceMutation {
 			t.Fatalf("op %q: expected %q, got %q", op, IntentNamespaceMutation, got)
@@ -107,6 +107,15 @@ func TestOpNameRoundTrip(t *testing.T) {
 		rawOpSetattr:    OpSetattr,
 		rawOpSetxattr:   OpSetxattr,
 		rawOpStatfs:     OpStatfs,
+		rawOpUnlink:     OpUnlink,
+		rawOpLink:       OpLink,
+		rawOpSymlink:    OpSymlink,
+		rawOpCreate:     OpCreate,
+		rawOpListxattr:  OpListxattr,
+		rawOpGetACL:     OpGetACL,
+		rawOpSetACL:     OpSetACL,
+		rawOpReadlink:   OpReadlink,
+		rawOpReaddir:    OpReaddir,
 	}
 	for raw, want := range cases {
 		got, err := opName(raw)

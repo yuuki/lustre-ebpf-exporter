@@ -53,7 +53,8 @@ The design intentionally separates two planes:
 1. `llite`
    This is the user-facing workload plane. It answers who touched Lustre and which operation class
    they requested. Observed via kprobes on `ll_lookup_nd`, `ll_file_open`, `ll_file_read_iter`,
-   `ll_file_write_iter`, and `ll_fsync`.
+   `ll_file_write_iter`, and `ll_fsync`, with optional metadata probes for close, attributes,
+   xattrs, directory entry mutations, ACLs, symlink reads, and directory reads.
 
 2. `PtlRPC`
    This is the client-internal impact plane. It answers how much RPC wait occurred inside the
@@ -61,8 +62,8 @@ The design intentionally separates two planes:
 
 The `access_intent` label classifies operations into:
 
-- `namespace_read`: `lookup`
-- `namespace_mutation`: `open` (create path)
+- `namespace_read`: `lookup`, `open`, `close`, `getattr`, `getxattr`, `listxattr`, `get_acl`, `readlink`, `readdir`, `statfs`
+- `namespace_mutation`: `create`, `mkdir`, `mknod`, `unlink`, `rmdir`, `rename`, `link`, `symlink`, `setattr`, `setxattr`, `set_acl`
 - `data_read`: `read`
 - `data_write`: `write`
 - `sync`: `fsync`
@@ -348,8 +349,9 @@ For the legacy Python path and full Lima environment setup, see [e2e/lima/README
 
 - The Go exporter currently prioritizes mount-scoped llite operation counting and PtlRPC wait
   visibility over full llite latency and byte accounting.
-- Optional probes such as `ptlrpc_send_new_req` and `__ptlrpc_free_req` may be unavailable on a
-  given Lustre build; the Go exporter degrades when that happens.
+- Optional probes such as extended llite metadata probes, `ptlrpc_send_new_req`, and
+  `__ptlrpc_free_req` may be unavailable on a given Lustre build; the Go exporter degrades when
+  that happens.
 - The Linux E2E environment is based on Lustre 2.14 on Rocky 8, so behavior outside that matrix
   still needs broader validation.
 - The project does not export file paths, inode numbers, PIDs, or request pointers as metric
