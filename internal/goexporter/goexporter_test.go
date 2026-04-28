@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -71,13 +73,13 @@ func TestAccessIntentForOp(t *testing.T) {
 		t.Fatalf("expected empty intent, got %q", got)
 	}
 
-	namespaceReads := []string{OpClose, OpGetattr, OpGetxattr, OpStatfs}
+	namespaceReads := []string{OpClose, OpGetattr, OpGetxattr, OpStatfs, OpListxattr, OpGetACL, OpReadlink, OpReaddir}
 	for _, op := range namespaceReads {
 		if got := AccessIntentForOp(op); got != IntentNamespaceRead {
 			t.Fatalf("op %q: expected %q, got %q", op, IntentNamespaceRead, got)
 		}
 	}
-	namespaceMutations := []string{OpMkdir, OpMknod, OpRename, OpRmdir, OpSetattr, OpSetxattr, OpUnlink}
+	namespaceMutations := []string{OpMkdir, OpMknod, OpRename, OpRmdir, OpSetattr, OpSetxattr, OpUnlink, OpLink, OpSymlink, OpCreate}
 	for _, op := range namespaceMutations {
 		if got := AccessIntentForOp(op); got != IntentNamespaceMutation {
 			t.Fatalf("op %q: expected %q, got %q", op, IntentNamespaceMutation, got)
@@ -107,6 +109,14 @@ func TestOpNameRoundTrip(t *testing.T) {
 		rawOpSetattr:    OpSetattr,
 		rawOpSetxattr:   OpSetxattr,
 		rawOpStatfs:     OpStatfs,
+		rawOpUnlink:     OpUnlink,
+		rawOpLink:       OpLink,
+		rawOpSymlink:    OpSymlink,
+		rawOpCreate:     OpCreate,
+		rawOpListxattr:  OpListxattr,
+		rawOpGetACL:     OpGetACL,
+		rawOpReadlink:   OpReadlink,
+		rawOpReaddir:    OpReaddir,
 	}
 	for raw, want := range cases {
 		got, err := opName(raw)
@@ -121,6 +131,68 @@ func TestOpNameRoundTrip(t *testing.T) {
 	if _, err := opName(255); err == nil {
 		t.Errorf("opName(255) should return error for unknown code")
 	}
+}
+
+func TestRawOpCodesMatchBPFDefinitions(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("../bpf/lustre_ebpf_exporter.bpf.c")
+	if err != nil {
+		t.Fatalf("read BPF source: %v", err)
+	}
+	defines := parseBPFOPDefines(t, string(source))
+	cases := map[string]uint8{
+		"OP_LOOKUP":       rawOpLookup,
+		"OP_OPEN":         rawOpOpen,
+		"OP_READ":         rawOpRead,
+		"OP_WRITE":        rawOpWrite,
+		"OP_FSYNC":        rawOpFsync,
+		"OP_QUEUE_WAIT":   rawOpQueueWait,
+		"OP_SEND_NEW_REQ": rawOpSendNewReq,
+		"OP_FREE_REQ":     rawOpFreeReq,
+		"OP_CLOSE":        rawOpClose,
+		"OP_GETATTR":      rawOpGetattr,
+		"OP_GETXATTR":     rawOpGetxattr,
+		"OP_MKDIR":        rawOpMkdir,
+		"OP_MKNOD":        rawOpMknod,
+		"OP_RENAME":       rawOpRename,
+		"OP_RMDIR":        rawOpRmdir,
+		"OP_SETATTR":      rawOpSetattr,
+		"OP_SETXATTR":     rawOpSetxattr,
+		"OP_STATFS":       rawOpStatfs,
+		"OP_UNLINK":       rawOpUnlink,
+		"OP_LINK":         rawOpLink,
+		"OP_SYMLINK":      rawOpSymlink,
+		"OP_CREATE":       rawOpCreate,
+		"OP_LISTXATTR":    rawOpListxattr,
+		"OP_GETACL":       rawOpGetACL,
+		"OP_READLINK":     rawOpReadlink,
+		"OP_READDIR":      rawOpReaddir,
+	}
+	for name, want := range cases {
+		got, ok := defines[name]
+		if !ok {
+			t.Fatalf("missing BPF define %s", name)
+		}
+		if got != want {
+			t.Fatalf("%s = %d in BPF, want Go raw op %d", name, got, want)
+		}
+	}
+}
+
+func parseBPFOPDefines(t *testing.T, source string) map[string]uint8 {
+	t.Helper()
+
+	re := regexp.MustCompile(`(?m)^#define (OP_[A-Z0-9_]+) ([0-9]+)$`)
+	defines := make(map[string]uint8)
+	for _, match := range re.FindAllStringSubmatch(source, -1) {
+		value, err := strconv.ParseUint(match[2], 10, 8)
+		if err != nil {
+			t.Fatalf("parse %s value %q: %v", match[1], match[2], err)
+		}
+		defines[match[1]] = uint8(value)
+	}
+	return defines
 }
 
 func TestResolveMountInfoFromText(t *testing.T) {
