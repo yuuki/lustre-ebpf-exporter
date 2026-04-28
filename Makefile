@@ -23,6 +23,16 @@ DOCKERFILE_GO_EXPORTER ?= build/docker/go-exporter.Dockerfile
 generate-go-exporter:
 	cd internal/bpf && $(BPF2GO) -cc $(BPF_CLANG) -strip $(BPF2GO_STRIP) -target $(GOARCH) -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- $(BPF_CFLAGS)
 
+# generate-go-exporter-all: generate BPF bindings for both supported archs.
+# Used by the goreleaser pre-hook so each goarch picks up the embedded .o
+# tagged for it (//go:build amd64 vs //go:build arm64).
+.PHONY: generate-go-exporter-all
+generate-go-exporter-all:
+	$(MAKE) generate-go-exporter GOARCH=amd64 \
+		BPF_CFLAGS="-I. -I/usr/include/x86_64-linux-gnu -D__TARGET_ARCH_x86"
+	$(MAKE) generate-go-exporter GOARCH=arm64 \
+		BPF_CFLAGS="-I. -I/usr/include/aarch64-linux-gnu -D__TARGET_ARCH_arm64"
+
 # docker-generate-go-exporter: run BPF codegen inside Docker (use this on macOS)
 .PHONY: docker-generate-go-exporter
 docker-generate-go-exporter:
@@ -37,6 +47,16 @@ build-go-exporter:
 .PHONY: test-go
 test-go:
 	$(GO) test ./...
+
+GORELEASER ?= goreleaser
+
+.PHONY: snapshot
+snapshot:
+	$(GORELEASER) release --snapshot --clean --skip=publish
+
+.PHONY: release-check
+release-check:
+	$(GORELEASER) check
 
 .PHONY: docker-build-go-exporter
 docker-build-go-exporter:

@@ -1,4 +1,6 @@
 package goexporter
 
-//go:generate sh -c "cd ../bpf && BPF_CFLAGS=${BPF_CFLAGS:--I. -D__TARGET_ARCH_x86} go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -target amd64 -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- ${BPF_CFLAGS:--I. -D__TARGET_ARCH_x86}"
-//go:generate sh -c "cd ../bpf && BPF_CFLAGS=${BPF_CFLAGS:--I. -D__TARGET_ARCH_arm64} go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -target arm64 -go-package bpf lustreebpfexporter ./lustre_ebpf_exporter.bpf.c -- ${BPF_CFLAGS:--I. -D__TARGET_ARCH_arm64}"
+// BPF bindings are generated via the Makefile target `generate-go-exporter`
+// (or `generate-go-exporter-all` for multi-arch). The bpf2go invocation lives
+// there to keep CFLAGS, strip options, and per-arch include paths in one
+// place. Do not add `go:generate` directives here.

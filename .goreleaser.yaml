@@ -1,0 +1,70 @@
+version: 2
+
+project_name: lustre-ebpf-exporter
+
+before:
+  hooks:
+    - go mod download
+    - make generate-go-exporter-all
+
+builds:
+  - id: lustre-ebpf-exporter
+    main: ./cmd/lustre-ebpf-exporter
+    binary: lustre-ebpf-exporter
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+    overrides:
+      - goos: linux
+        goarch: amd64
+        env:
+          - CC=gcc
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=aarch64-linux-gnu-gcc
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+      - build/systemd/lustre-ebpf-exporter.service
+      - build/systemd/lustre-ebpf-exporter.default
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+
+release:
+  github:
+    owner: yuuki
+    name: lustre-ebpf-exporter
+  draft: false
+  prerelease: auto
