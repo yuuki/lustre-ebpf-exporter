@@ -1,46 +1,46 @@
-FROM golang:1.26.1-bookworm AS codegen
+# Stage 1: Go module cache
+FROM golang:1.26.1-bookworm AS deps
 
-ENV PATH=/usr/local/go/bin:/go/bin:${PATH}
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Stage 2: BPF codegen (clang + bpf2go)
+FROM deps AS codegen
+
 ENV BPF_CFLAGS="-I. -I/usr/include/x86_64-linux-gnu -D__TARGET_ARCH_x86"
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends clang libbpf-dev libelf-dev linux-libc-dev llvm make \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src
-
-COPY go.mod go.sum Makefile ./
-RUN go mod download
+COPY Makefile ./
 COPY internal/bpf ./internal/bpf
 
 RUN make generate-go-exporter GOOS=linux GOARCH=amd64
 
-FROM golang:1.26.1-bookworm AS builder
+# Stage 3: Go binary build
+FROM deps AS builder
 
 ARG VERSION=dev
 ARG COMMIT=unknown
 
-ENV PATH=/usr/local/go/bin:/go/bin:${PATH}
-ENV BPF_CFLAGS="-I. -I/usr/include/x86_64-linux-gnu -D__TARGET_ARCH_x86"
-
 RUN apt-get update \
- && apt-get install -y --no-install-recommends clang libbpf-dev libelf-dev linux-libc-dev llvm make \
+ && apt-get install -y --no-install-recommends libbpf-dev libelf-dev linux-libc-dev \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /src
-
-COPY go.mod go.sum Makefile ./
-RUN go mod download
+COPY Makefile ./
 COPY cmd ./cmd
 COPY internal ./internal
 
-RUN make generate-go-exporter GOOS=linux GOARCH=amd64
+# Replace host-side stubs with clang-compiled BPF artifacts from codegen stage
+COPY --from=codegen /src/internal/bpf/lustreebpfexporter_*.go ./internal/bpf/
+COPY --from=codegen /src/internal/bpf/lustreebpfexporter_*.o  ./internal/bpf/
+
 RUN make build-go-exporter GOOS=linux GOARCH=amd64 \
     LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT}"
 
-RUN mkdir -p /out \
- && cp dist/linux-amd64/lustre-ebpf-exporter /out/lustre-ebpf-exporter
-
+# Stage 4: Export artifact to local filesystem (used with --output type=local)
 FROM scratch AS export
 
-COPY --from=builder /out/ /
+COPY --from=builder /src/dist/linux-amd64/lustre-ebpf-exporter /
