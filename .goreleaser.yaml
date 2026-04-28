@@ -4,7 +4,6 @@ project_name: lustre-ebpf-exporter
 
 before:
   hooks:
-    - go mod download
     - make generate-go-exporter-all
 
 builds:
@@ -25,10 +24,6 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .ShortCommit }}
     overrides:
-      - goos: linux
-        goarch: amd64
-        env:
-          - CC=gcc
       - goos: linux
         goarch: arm64
         env:
@@ -63,8 +58,4 @@ changelog:
       - '^ci:'
 
 release:
-  github:
-    owner: yuuki
-    name: lustre-ebpf-exporter
-  draft: false
   prerelease: auto

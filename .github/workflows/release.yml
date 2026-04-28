@@ -30,13 +30,18 @@ jobs:
         run: |
           set -eux
           sudo dpkg --add-architecture arm64
-          # Restrict the default sources.list (which points to azure mirrors
-          # that do not carry arm64 ports) to amd64/i386 so apt only fetches
-          # arm64 packages from ports.ubuntu.com.
-          sudo sed -i 's/^deb /deb [arch=amd64,i386] /' /etc/apt/sources.list || true
-          for f in /etc/apt/sources.list.d/*.list; do
+          # The default mirrors for ubuntu-latest do not carry arm64 ports,
+          # so restrict them to amd64/i386 and add ports.ubuntu.com for
+          # arm64. Handle both legacy one-line apt sources (Ubuntu 22.04
+          # and earlier) and deb822 sources (Ubuntu 24.04+).
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
             [ -f "$f" ] || continue
             sudo sed -i 's/^deb /deb [arch=amd64,i386] /' "$f"
+          done
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] || continue
+            grep -q '^Architectures:' "$f" || \
+              sudo sed -i '/^Types:/a Architectures: amd64 i386' "$f"
           done
           codename="$(lsb_release -cs)"
           sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null <<EOF
