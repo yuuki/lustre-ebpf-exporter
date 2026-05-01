@@ -312,18 +312,10 @@ type Config struct {
 	SlurmJobIDCacheSize int
 
 	// ProcessAllowlist is a static list of process names that pass through
-	// as-is; all others are replaced with "other". When set, it takes
-	// priority over ProcessTailTrimPercent.
+	// as-is; all others are replaced with "other".
 	ProcessAllowlist []string
-	// ProcessTailTrimPercent (0–100) dynamically trims the bottom N% of
-	// processes by operation count each drain interval. 0 disables trimming.
-	ProcessTailTrimPercent float64
-	// ProcessTailTrimHysteresis is the number of consecutive drain cycles
-	// a process must remain in the trim candidate set before it is actually
-	// trimmed. Prevents label churn from borderline processes. Default: 1.
-	ProcessTailTrimHysteresis int
 	// ProcessNameStripSuffix removes trailing separator+digits suffixes from
-	// process names before allowlist/trim checks (e.g. "Bun Pool 1" → "Bun Pool").
+	// process names before the allowlist check (e.g. "Bun Pool 1" → "Bun Pool").
 	ProcessNameStripSuffix bool
 
 	// UIDLabelsEnabled controls per-UID measurement end-to-end. Default true.

@@ -53,12 +53,6 @@ type BPFCounterCollector struct {
 
 	processFilter *ProcessFilter
 
-	// processOps tracks ops per process name (suffix-stripped when enabled)
-	// observed in the current drain cycle. Reset each drain so the
-	// tail-trim ranking reflects recent activity, not lifetime totals,
-	// and to prevent unbounded growth from short-lived process names.
-	processOps map[string]float64
-
 	accessOpsDesc    *prometheus.Desc
 	dataBytesDesc    *prometheus.Desc
 	rpcWaitOpsDesc   *prometheus.Desc
@@ -99,7 +93,6 @@ func NewBPFCounterCollector(lliteMap, rpcMap, lliteErrorMap, rpcErrorMap *ebpf.M
 		slurmEnabled:  slurmEnabled,
 		uidEnabled:    uidEnabled,
 		processFilter: processFilter,
-		processOps:    map[string]float64{},
 		lliteAcc:      map[string]*lliteAccum{},
 		rpcAcc:        map[string]*rpcAccum{},
 		lliteErrorAcc: map[string]*lliteErrorAccum{},
@@ -204,24 +197,10 @@ func (c *BPFCounterCollector) StartDrain(ctx context.Context, interval time.Dura
 	}()
 }
 
-// DrainOnce reads both BPF counter maps, accumulates values, and updates
-// the dynamic tail-trim set. The trim set is updated BEFORE draining so
-// that the current drain's labels reflect the latest ranking, not the
-// previous cycle's.
+// DrainOnce reads both BPF counter maps and accumulates values.
 func (c *BPFCounterCollector) DrainOnce() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	// Update trim set from the PREVIOUS drain's per-process ops before
-	// labeling the current drain. This eliminates the off-by-one where
-	// newly trimmed processes would only appear as "other" one drain late.
-	if c.processFilter.ShouldUpdateTrimSet() {
-		c.processFilter.UpdateTrimSet(c.opsPerProcess())
-	}
-
-	// Reset per-cycle ops so the trim ranking reflects only the latest
-	// drain window, preventing unbounded growth from short-lived processes.
-	c.processOps = make(map[string]float64, len(c.processOps))
 
 	if c.lliteMap != nil {
 		c.drainLLite(c.lliteMap)
@@ -235,12 +214,6 @@ func (c *BPFCounterCollector) DrainOnce() {
 	if c.rpcErrorMap != nil {
 		c.drainRPCErrors(c.rpcErrorMap)
 	}
-}
-
-// opsPerProcess returns ops per raw (pre-normalization) process name
-// observed in the current drain cycle, suitable for tail-trim ranking.
-func (c *BPFCounterCollector) opsPerProcess() map[string]float64 {
-	return c.processOps
 }
 
 // drainCounterMap iterates a BPF counter map, invokes onEntry for each
@@ -289,7 +262,7 @@ func (c *BPFCounterCollector) resolveUID(keyUID uint32) (uid, username string) {
 func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*lliteAccum) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		process := c.normalizeProcess(key.Comm, total.OpsCount)
+		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
 		uid, username := c.resolveUID(key.UID)
@@ -318,7 +291,7 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		process := c.normalizeProcess(key.Comm, total.OpsCount)
+		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
 		op := rawOpToName(key.Op)
 		uid, username := c.resolveUID(key.UID)
 		actor := actorTypeName(key.ActorType)
@@ -367,7 +340,7 @@ func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bp
 func (c *BPFCounterCollector) drainLLiteStyleErrors(m *ebpf.Map, acc map[string]*lliteErrorAccum) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		process := c.normalizeProcess(key.Comm, total.OpsCount)
+		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
 		uid, username := c.resolveUID(key.UID)
@@ -400,7 +373,7 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		if eventName == "" {
 			eventName = unknownRPCEvent
 		}
-		process := c.normalizeProcess(key.Comm, total.OpsCount)
+		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
 		uid, username := c.resolveUID(key.UID)
 		actor := actorTypeName(key.ActorType)
 
@@ -425,20 +398,6 @@ func (c *BPFCounterCollector) mountLabel(idx uint8) (mountPath, fsName string) {
 		return mi.Path, mi.FSName
 	}
 	return "", ""
-}
-
-// normalizeProcess sanitizes the BPF comm field, records ops for
-// tail-trim ranking (keyed by suffix-stripped name when enabled),
-// and returns the filtered process name.
-func (c *BPFCounterCollector) normalizeProcess(comm [16]byte, opsCount uint64) string {
-	raw := sanitizeComm(comm[:])
-	// Use the suffix-stripped name as the ops accumulation key so that
-	// UpdateTrimSet and Normalize operate on the same names.
-	stripped := c.processFilter.StripName(raw)
-	if opsCount > 0 {
-		c.processOps[stripped] += float64(opsCount)
-	}
-	return c.processFilter.Normalize(raw)
 }
 
 func rawOpToName(raw uint8) string {
