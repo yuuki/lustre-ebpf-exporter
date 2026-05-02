@@ -43,7 +43,7 @@ func Run(ctx context.Context, cfg Config) error {
 	resolver := NewUsernameResolver()
 	slurmResolver := newSlurmResolverFromConfig(cfg)
 	procNameResolver := NewProcNameResolver()
-	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessTailTrimPercent, cfg.ProcessTailTrimHysteresis, cfg.ProcessNameStripSuffix)
+	processFilter := NewProcessFilter(cfg.ProcessAllowlist, cfg.ProcessNameStripSuffix)
 
 	lliteMap, rpcMap := source.CounterMaps()
 	lliteErrorMap, rpcErrorMap := source.ErrorCounterMaps()
@@ -94,9 +94,8 @@ func Run(ctx context.Context, cfg Config) error {
 			} else {
 				log.Printf("warning: event has unknown mount index %d", event.MountIdx)
 			}
-			bpfComm := event.Comm
-			rawComm := procNameResolver.Resolve(event.PID, bpfComm)
-			event.Comm = processFilter.Normalize(rawComm, bpfComm)
+			rawComm := procNameResolver.Resolve(event.PID, event.Comm)
+			event.Comm = processFilter.Normalize(rawComm)
 			if debugEnabled {
 				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
 			}
