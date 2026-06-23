@@ -32,13 +32,15 @@ builds:
 archives:
   - id: default
     name_template: "{{ .ProjectName }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+    wrap_in_directory: true
     formats:
       - tar.gz
     files:
       - LICENSE
-      - README.md
-      - build/systemd/lustre-ebpf-exporter.service
-      - build/systemd/lustre-ebpf-exporter.default
+      - src: build/systemd/lustre-ebpf-exporter.service
+        dst: lustre-ebpf-exporter.service
+      - src: build/systemd/lustre-ebpf-exporter.default
+        dst: lustre-ebpf-exporter.default
 
 checksum:
   name_template: checksums.txt
