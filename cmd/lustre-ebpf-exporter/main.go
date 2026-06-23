@@ -62,7 +62,7 @@ func main() {
 	flag.BoolVar(&cfg.UIDLabelsEnabled, "uid-labels", true, "Emit uid/username labels and key BPF counter maps per-UID; set to false to drop both labels and skip kernel-side bpf_get_current_uid_gid collection so PERCPU_HASH rows fold across users")
 	flag.BoolVar(&cfg.HistogramProcessLabelsEnabled, "histogram-process-labels", false, "Emit process label on histogram metric families; default false drops it from histogram bucket/sum/count series to reduce cardinality while keeping process-labeled counters/gauges such as operation totals")
 	flag.StringVar(&processAllowlist, "process-allowlist", "", "Comma-separated list of process names to track individually; all others become \"other\"")
-	flag.BoolVar(&cfg.ProcessNameStripSuffix, "process-name-strip-suffix", false, "Strip trailing separator+digits from process names (e.g. \"Bun Pool 1\" → \"Bun Pool\") to reduce label cardinality")
+	flag.BoolVar(&cfg.ProcessNameStripSuffix, "process-name-strip-suffix", false, "Normalize process-name instance variants (e.g. \"Bun Pool 1\" → \"Bun Pool\") to reduce label cardinality")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -138,7 +138,7 @@ func main() {
 		log.Printf("Histogram process labels: disabled")
 	}
 	if cfg.ProcessNameStripSuffix {
-		log.Printf("Process name suffix stripping: enabled")
+		log.Printf("Process name instance variant normalization: enabled")
 	}
 	if len(cfg.ProcessAllowlist) > 0 {
 		log.Printf("Process allowlist: %s (all others become \"other\")", strings.Join(cfg.ProcessAllowlist, ", "))

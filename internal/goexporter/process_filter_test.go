@@ -34,7 +34,7 @@ func TestProcessFilterAllowlistEmpty(t *testing.T) {
 	}
 }
 
-func TestStripTrailingNumericSuffix(t *testing.T) {
+func TestNormalizeProcessInstanceVariant(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		input string
@@ -45,45 +45,59 @@ func TestStripTrailingNumericSuffix(t *testing.T) {
 		{"worker-3", "worker"},
 		{"thread_42", "thread"},
 		{"handler:7", "handler"},
+		{"kworker/1", "kworker"},
+		{"kworker/10", "kworker"},
+		{"kworker/107", "kworker"},
+		{"Thread-1099 (pr", "Thread"},
+		{"Thread-1100 (pr", "Thread"},
+		{"Thread-12 (proc", "Thread"},
 		{"pool 0", "pool"},
+		{"client.poll12", "client.poll"},
+		{"client.poll18", "client.poll"},
+		{"ray-dashboard-A", "ray-dashboard"},
+		{"ray-dashboard-E", "ray-dashboard"},
+		{"ray-dashboard-J", "ray-dashboard"},
+		{"ray-dashboard-a", "ray-dashboard"},
+		{"ray-dashboard-z", "ray-dashboard"},
 
 		// Version numbers — must NOT strip.
 		{"python3.11", "python3.11"},
 		{"python3", "python3"},
 		{"go1.21.5", "go1.21.5"},
+		{"ray-dashboard-AB", "ray-dashboard-AB"},
 
 		// Parenthesised numeric suffix.
 		{"worker(1)", "worker"},
 		{"worker(23)", "worker"},
 		{"pool(0)", "pool"},
-		{"worker (1)", "worker"},   // separator before paren is also stripped
-		{"task-(2)", "task"},       // dash separator before paren
-		{"job_(3)", "job"},         // underscore separator before paren
+		{"worker (1)", "worker"}, // separator before paren is also stripped
+		{"task-(2)", "task"},     // dash separator before paren
+		{"job_(3)", "job"},       // underscore separator before paren
 
 		// Bracketed numeric suffix.
 		{"worker[10]", "worker"},
 		{"worker[11]", "worker"},
 		{"pool[0]", "pool"},
-		{"task [3]", "task"},       // separator before bracket is also stripped
-		{"job-[99]", "job"},        // dash separator before bracket
+		{"task [3]", "task"}, // separator before bracket is also stripped
+		{"job-[99]", "job"},  // dash separator before bracket
 
 		// Edge cases.
 		{"dd", "dd"},
 		{"123", "123"},
 		{"a-1", "a"},
-		{" 1", " 1"},   // would reduce to empty → leave unchanged
-		{"-1", "-1"},    // would reduce to empty → leave unchanged
-		{"v2", "v2"},    // no recognised separator
+		{" 1", " 1"}, // would reduce to empty → leave unchanged
+		{"-1", "-1"}, // would reduce to empty → leave unchanged
+		{"v2", "v2"}, // no recognised separator
 		{"name--42", "name-"},
-		{"(1)", "(1)"},  // would reduce to empty → leave unchanged
-		{"x()", "x()"},         // no digits inside parens → leave unchanged
-		{"x(ab)", "x(ab)"},     // non-digits inside parens → leave unchanged
-		{"a(1)", "a"},          // shortest valid parenthesised input
+		{"(1)", "(1)"},             // would reduce to empty → leave unchanged
+		{"x()", "x()"},             // no digits inside parens → leave unchanged
+		{"x(ab)", "x(ab)"},         // non-digits inside parens → leave unchanged
+		{"a(1)", "a"},              // shortest valid parenthesised input
 		{"foo(bar)-1", "foo(bar)"}, // paren path misses, falls through to separator path
 	}
 	for _, tt := range tests {
-		if got := stripTrailingNumericSuffix(tt.input); got != tt.want {
-			t.Errorf("stripTrailingNumericSuffix(%q) = %q, want %q", tt.input, got, tt.want)
+		if got := normalizeProcessInstanceVariant(tt.input); got != tt.want {
+			t.Errorf("normalizeProcessInstanceVariant(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -114,13 +128,25 @@ func TestProcessFilterStripSuffixDisabled(t *testing.T) {
 
 func TestProcessFilterStripSuffixWithAllowlist(t *testing.T) {
 	t.Parallel()
-	f := NewProcessFilter([]string{"Bun Pool"}, true)
+	f := NewProcessFilter([]string{"Bun Pool", "Thread", "client.poll", "kworker", "ray-dashboard"}, true)
 
 	if got := f.Normalize("Bun Pool 1"); got != "Bun Pool" {
 		t.Fatalf("expected 'Bun Pool', got %q", got)
 	}
 	if got := f.Normalize("Bun Pool 99"); got != "Bun Pool" {
 		t.Fatalf("expected 'Bun Pool', got %q", got)
+	}
+	if got := f.Normalize("Thread-1099 (pr"); got != "Thread" {
+		t.Fatalf("expected 'Thread', got %q", got)
+	}
+	if got := f.Normalize("client.poll12"); got != "client.poll" {
+		t.Fatalf("expected 'client.poll', got %q", got)
+	}
+	if got := f.Normalize("kworker/107"); got != "kworker" {
+		t.Fatalf("expected 'kworker', got %q", got)
+	}
+	if got := f.Normalize("ray-dashboard-E"); got != "ray-dashboard" {
+		t.Fatalf("expected 'ray-dashboard', got %q", got)
 	}
 	if got := f.Normalize("other_proc"); got != "other" {
 		t.Fatalf("expected 'other', got %q", got)
