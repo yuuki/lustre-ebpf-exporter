@@ -31,7 +31,7 @@ builds:
 
 archives:
   - id: default
-    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    name_template: "{{ .ProjectName }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
     formats:
       - tar.gz
     files:
