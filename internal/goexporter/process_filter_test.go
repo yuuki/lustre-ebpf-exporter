@@ -57,14 +57,14 @@ func TestNormalizeProcessInstanceVariant(t *testing.T) {
 		{"ray-dashboard-A", "ray-dashboard"},
 		{"ray-dashboard-E", "ray-dashboard"},
 		{"ray-dashboard-J", "ray-dashboard"},
+		{"ray-dashboard-a", "ray-dashboard"},
+		{"ray-dashboard-z", "ray-dashboard"},
 
 		// Version numbers — must NOT strip.
 		{"python3.11", "python3.11"},
 		{"python3", "python3"},
 		{"go1.21.5", "go1.21.5"},
 		{"ray-dashboard-AB", "ray-dashboard-AB"},
-		{"ray-dashboard-a", "ray-dashboard"},
-		{"ray-dashboard-z", "ray-dashboard"},
 
 		// Parenthesised numeric suffix.
 		{"worker(1)", "worker"},
