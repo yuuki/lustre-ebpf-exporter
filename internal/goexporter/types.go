@@ -314,8 +314,8 @@ type Config struct {
 	// ProcessAllowlist is a static list of process names that pass through
 	// as-is; all others are replaced with "other".
 	ProcessAllowlist []string
-	// ProcessNameStripSuffix removes trailing separator+digits suffixes from
-	// process names before the allowlist check (e.g. "Bun Pool 1" → "Bun Pool").
+	// ProcessNameStripSuffix normalizes process-name instance variants before
+	// the allowlist check (e.g. "Bun Pool 1" → "Bun Pool").
 	ProcessNameStripSuffix bool
 
 	// UIDLabelsEnabled controls per-UID measurement end-to-end. Default true.

@@ -164,32 +164,43 @@ list is collapsed to `"other"`.
 
 Use this when you know exactly which processes matter.
 
-#### `--process-name-strip-suffix` (numeric suffix normalization)
+#### `--process-name-strip-suffix` (instance variant normalization)
 
-Many runtimes and thread pools append numeric identifiers to process names
-(e.g. "Bun Pool 1", "Bun Pool 2", "worker-3", "thread_42"). Each numbered
-variant becomes a distinct Prometheus label, causing cardinality explosion.
+Many runtimes and thread pools append instance identifiers to process names
+(e.g. "Bun Pool 1", "Bun Pool 2", "worker-3", "thread_42"). Kernel workers
+and polling loops often do the same with other separators (e.g. "kworker/107",
+"client.poll12"). Some process groups use single-letter suffixes (e.g.
+"ray-dashboard-A", "ray-dashboard-a"). Each variant becomes a distinct
+Prometheus label, causing cardinality explosion.
 
-This flag strips the trailing separator+digits suffix, collapsing all
-variants to a single canonical name:
+This flag normalizes process-name instance variants, collapsing them to a
+single canonical name:
 
 ```bash
 --process-name-strip-suffix
 # "Bun Pool 1", "Bun Pool 2", "Bun Pool 3" → "Bun Pool"
 # "worker-3" → "worker"
 # "thread_42" → "thread"
+# "kworker/107" → "kworker"
+# "client.poll12" → "client.poll"
+# "ray-dashboard-E" → "ray-dashboard"
+# "ray-dashboard-a" → "ray-dashboard"
 ```
 
-Recognised separators: space (` `), dash (`-`), underscore (`_`), colon (`:`).
-Period is intentionally excluded so version-like names (`python3.11`, `go1.21`)
-are not affected.
+Recognised separators for instance tokens: space (` `), dash (`-`),
+underscore (`_`), colon (`:`), slash (`/`). Separator tokens are normalized
+when they are numeric (`worker-3`) or a single letter (`ray-dashboard-E`,
+`ray-dashboard-a`). Dotted names with trailing numeric instance suffixes are
+normalized when the final component has a non-numeric prefix (for example,
+`client.poll12`). Version-like names (`python3.11`, `go1.21.5`) and
+non-separated runtime names (`python3`) are not affected.
 
-Stripping is applied **before** the allowlist check, so the allowlist
+Normalization is applied **before** the allowlist check, so the allowlist
 operates on the normalized names. Disabled by default.
 
 #### Priority
 
-1. If `--process-name-strip-suffix` is set, trailing separator+digits suffixes are stripped first.
+1. If `--process-name-strip-suffix` is set, process-name instance variants are normalized first.
 2. If `--process-allowlist` is set, names not in the list become `"other"`.
 3. If neither is set, all process names pass through unchanged.
 
@@ -251,7 +262,7 @@ Useful flags:
 - `--slurm-jobid` (enable Slurm job id resolution per pid)
 - `--slurm-jobid-ttl`, `--slurm-jobid-negative-ttl`, `--slurm-jobid-verify-ttl`, `--slurm-jobid-cache-size`
 - `--process-allowlist` (comma-separated list of process names to track; all others become `"other"`)
-- `--process-name-strip-suffix` (strip trailing separator+digits from process names; default `false`)
+- `--process-name-strip-suffix` (normalize process-name instance variants; default `false`)
 - `--histogram-process-labels` (default `false`; when `false`, histogram families omit `process`)
 - `--uid-labels` (default `true`; when `false`, drops `uid` and `username` labels and skips kernel-side `bpf_get_current_uid_gid()` — collapsing BPF PERCPU_HASH rows across users)
 - `--web.listen-address`

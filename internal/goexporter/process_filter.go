@@ -4,14 +4,14 @@ const processOther = "other"
 
 // ProcessFilter normalizes process names to reduce Prometheus label
 // cardinality. It supports a static allowlist: only names in the allowlist
-// pass through; everything else becomes "other". An optional suffix-stripping
-// pass can collapse numbered variants (e.g. "Bun Pool 1" → "Bun Pool")
+// pass through; everything else becomes "other". An optional normalization
+// pass can collapse instance variants (e.g. "Bun Pool 1" → "Bun Pool")
 // before the allowlist check.
 type ProcessFilter struct {
 	// Static allowlist (nil means disabled). Immutable after construction.
 	allowlist map[string]struct{}
 
-	// stripSuffix removes trailing separator+digits before filtering.
+	// stripSuffix normalizes process instance variants before filtering.
 	stripSuffix bool
 }
 
@@ -35,7 +35,7 @@ func NewProcessFilter(allowlist []string, stripSuffix bool) *ProcessFilter {
 // are replaced with "other". Lock-free on the hot path.
 func (f *ProcessFilter) Normalize(process string) string {
 	if f.stripSuffix {
-		process = stripTrailingNumericSuffix(process)
+		process = normalizeProcessInstanceVariant(process)
 	}
 
 	if f.allowlist != nil {
@@ -50,17 +50,21 @@ func (f *ProcessFilter) Normalize(process string) string {
 
 func isSeparator(c byte) bool {
 	switch c {
-	case ' ', '-', '_', ':':
+	case ' ', '-', '_', ':', '/':
 		return true
 	}
 	return false
 }
 
-// stripTrailingNumericSuffix removes a trailing separator+digits suffix from
-// a process name to collapse numbered variants (e.g. "Bun Pool 1" → "Bun Pool").
-// Bracketed suffixes like "(1)" and "[1]" are also stripped.
-// Names where digits follow a period (e.g. "python3.11") are left unchanged.
-func stripTrailingNumericSuffix(s string) string {
+// normalizeProcessInstanceVariant removes instance tokens from process names to
+// collapse variants (e.g. "Bun Pool 1" → "Bun Pool").
+// Bracketed suffixes like "(1)" and "[1]" are also stripped. Version-like names
+// such as "python3.11" and "go1.21.5" are left unchanged.
+func normalizeProcessInstanceVariant(s string) string {
+	if stripped := stripSeparatorInstanceToken(s); stripped != s {
+		return stripped
+	}
+
 	if n := len(s); n >= 3 {
 		var open byte
 		switch s[n-1] {
@@ -104,5 +108,58 @@ func stripTrailingNumericSuffix(s string) string {
 		}
 		return s[:i]
 	}
-	return s // separator not recognised (e.g. period)
+	return stripDottedTrailingNumber(s)
+}
+
+func stripSeparatorInstanceToken(s string) string {
+	for i := 0; i < len(s)-1; i++ {
+		if !isSeparator(s[i]) {
+			continue
+		}
+
+		j := i + 1
+		if s[j] >= '0' && s[j] <= '9' {
+			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+				j++
+			}
+		} else if isASCIIAlpha(s[j]) {
+			j++
+		} else {
+			continue
+		}
+		if j < len(s) && !isSeparator(s[j]) && s[j] != '(' && s[j] != '[' {
+			continue
+		}
+		if i == 0 {
+			return s // would reduce to empty
+		}
+		return s[:i]
+	}
+	return s
+}
+
+func isASCIIAlpha(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+func stripDottedTrailingNumber(s string) string {
+	dot := -1
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '.' {
+			dot = i
+			break
+		}
+	}
+	if dot < 0 || dot == len(s)-1 {
+		return s
+	}
+
+	i := len(s) - 1
+	for i > dot && s[i] >= '0' && s[i] <= '9' {
+		i--
+	}
+	if i == len(s)-1 || i == dot {
+		return s
+	}
+	return s[:i+1]
 }
