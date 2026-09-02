@@ -3,7 +3,7 @@
 [![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.ai/claude-code)
 [![License](https://img.shields.io/github/license/yuuki/lustre-ebpf-exporter)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/yuuki/lustre-ebpf-exporter)](https://github.com/yuuki/lustre-ebpf-exporter/releases)
-[![Go](https://img.shields.io/badge/Go-%3E%3D1.26-blue?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-%3E%3D1.27-blue?logo=go)](https://go.dev)
 
 `lustre-ebpf-exporter` measures Lustre client activity continuously on the client node.
 It uses `llite` as the primary observation plane for user-facing access activity and `PtlRPC`
