@@ -292,7 +292,7 @@ def test_makefile_wires_bpf2go_build_and_stage_targets() -> None:
 def test_go_exporter_dockerfile_builds_linux_artifacts() -> None:
     dockerfile = read_text("build/docker/go-exporter.Dockerfile")
 
-    assert "FROM golang:1.26.1-bookworm AS builder" in dockerfile
+    assert "FROM golang:1.27.1-bookworm AS deps" in dockerfile
     assert "ENV PATH=/usr/local/go/bin:/go/bin:${PATH}" in dockerfile
     assert "apt-get install -y --no-install-recommends clang libbpf-dev libelf-dev linux-libc-dev llvm make" in dockerfile
     assert 'ENV BPF_CFLAGS="-I. -I/usr/include/x86_64-linux-gnu -D__TARGET_ARCH_x86"' in dockerfile
