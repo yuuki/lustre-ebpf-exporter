@@ -189,6 +189,8 @@ type probeSpec struct {
 	tracepointName  string
 }
 
+// attachAll attaches specs in order, skipping the programs in alreadySkipped,
+// and stops at the first probe that may not be skipped.
 func (s *linuxEventSource) attachAll(specs []probeSpec, allowMissing bool, alreadySkipped map[string]struct{}) error {
 	for _, spec := range specs {
 		if alreadySkipped != nil {
@@ -196,35 +198,49 @@ func (s *linuxEventSource) attachAll(specs []probeSpec, allowMissing bool, alrea
 				continue
 			}
 		}
-		prog := s.collection.Programs[spec.program]
-		if prog == nil {
-			if spec.optional || allowMissing {
-				log.Printf("warning: BPF program %s not found", spec.program)
-				continue
-			}
-			return fmt.Errorf("required BPF program missing: %s", spec.program)
-		}
-		var (
-			lnk link.Link
-			err error
-		)
-		if spec.tracepointGroup != "" {
-			lnk, err = link.Tracepoint(spec.tracepointGroup, spec.tracepointName, prog, nil)
-		} else if spec.ret {
-			lnk, err = link.Kretprobe(spec.symbol, prog, nil)
-		} else {
-			lnk, err = link.Kprobe(spec.symbol, prog, nil)
-		}
-		if err != nil {
-			if spec.optional || allowMissing || isMissingSymbolError(err) {
-				log.Printf("warning: skipping probe %s/%s: %v", spec.symbol, spec.program, err)
-				continue
-			}
+		if err := s.attach(spec, allowMissing); err != nil {
 			return err
 		}
-		s.links = append(s.links, lnk)
 	}
 	return nil
+}
+
+// attach attaches one probe and keeps its link. A probe whose program is
+// missing or whose attach fails is logged and skipped when it is optional or
+// allowMissing is set; a failed attach is also skipped when its error reports a
+// missing symbol (isMissingSymbolError).
+func (s *linuxEventSource) attach(spec probeSpec, allowMissing bool) error {
+	prog := s.collection.Programs[spec.program]
+	if prog == nil {
+		if spec.optional || allowMissing {
+			log.Printf("warning: BPF program %s not found", spec.program)
+			return nil
+		}
+		return fmt.Errorf("required BPF program missing: %s", spec.program)
+	}
+	lnk, err := linkProbe(spec, prog)
+	if err != nil {
+		if spec.optional || allowMissing || isMissingSymbolError(err) {
+			log.Printf("warning: skipping probe %s/%s: %v", spec.symbol, spec.program, err)
+			return nil
+		}
+		return err
+	}
+	s.links = append(s.links, lnk)
+	return nil
+}
+
+// linkProbe attaches prog as the tracepoint, kretprobe or kprobe that spec
+// describes.
+func linkProbe(spec probeSpec, prog *ebpf.Program) (link.Link, error) {
+	switch {
+	case spec.tracepointGroup != "":
+		return link.Tracepoint(spec.tracepointGroup, spec.tracepointName, prog, nil)
+	case spec.ret:
+		return link.Kretprobe(spec.symbol, prog, nil)
+	default:
+		return link.Kprobe(spec.symbol, prog, nil)
+	}
 }
 
 func (s *linuxEventSource) readLoop(ctx context.Context) {
