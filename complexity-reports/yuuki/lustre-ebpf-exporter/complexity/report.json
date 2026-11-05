@@ -1,0 +1,60 @@
+{
+  "repository": "yuuki/lustre-ebpf-exporter/complexity",
+  "ref": "refs/heads/main",
+  "commit": "9ec1b792e8d44785a13fc735a672bcaf60e69c54",
+  "base_ref": "refs/heads/main",
+  "timestamp": "2026-11-05T13:07:49.089315135Z",
+  "custom_metrics": [
+    {
+      "key": "code_complexity",
+      "name": "Code Complexity",
+      "metrics": [
+        {
+          "key": "function_count",
+          "name": "Function count",
+          "value": 143
+        },
+        {
+          "key": "cognitive_sum",
+          "name": "Cognitive: total",
+          "value": 352
+        },
+        {
+          "key": "cognitive_max",
+          "name": "Cognitive: max",
+          "value": 14
+        },
+        {
+          "key": "cognitive_median",
+          "name": "Cognitive: median",
+          "value": 1
+        },
+        {
+          "key": "cognitive_p90",
+          "name": "Cognitive: p90",
+          "value": 7
+        },
+        {
+          "key": "cyclomatic_sum",
+          "name": "Cyclomatic: total",
+          "value": 498
+        },
+        {
+          "key": "cyclomatic_max",
+          "name": "Cyclomatic: max",
+          "value": 28
+        },
+        {
+          "key": "cyclomatic_median",
+          "name": "Cyclomatic: median",
+          "value": 3
+        },
+        {
+          "key": "cyclomatic_p90",
+          "name": "Cyclomatic: p90",
+          "value": 6
+        }
+      ]
+    }
+  ]
+}
