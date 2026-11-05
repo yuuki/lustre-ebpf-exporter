@@ -27,7 +27,7 @@ type bpfMountKey struct {
 
 type linuxEventSource struct {
 	events     chan Event
-	reader     *perf.Reader
+	reader     recordReader
 	collection *ebpf.Collection
 	links      []link.Link
 	once       sync.Once
@@ -35,6 +35,13 @@ type linuxEventSource struct {
 	started    bool
 	debugHex   bool
 	loggedHex  bool
+}
+
+// recordReader is the part of *perf.Reader that linuxEventSource uses. Tests
+// replace it to drive readLoop without loading BPF programs.
+type recordReader interface {
+	Read() (perf.Record, error)
+	Close() error
 }
 
 func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (EventSource, error) {
