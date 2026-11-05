@@ -230,16 +230,25 @@ func (s *linuxEventSource) attach(spec probeSpec, allowMissing bool) error {
 	return nil
 }
 
+// The constructors linkProbe dispatches to. Tests replace them to check the
+// dispatch and link bookkeeping, since attaching real probes needs root and
+// kernel support.
+var (
+	linkTracepoint = link.Tracepoint
+	linkKretprobe  = link.Kretprobe
+	linkKprobe     = link.Kprobe
+)
+
 // linkProbe attaches prog as the tracepoint, kretprobe or kprobe that spec
 // describes.
 func linkProbe(spec probeSpec, prog *ebpf.Program) (link.Link, error) {
 	switch {
 	case spec.tracepointGroup != "":
-		return link.Tracepoint(spec.tracepointGroup, spec.tracepointName, prog, nil)
+		return linkTracepoint(spec.tracepointGroup, spec.tracepointName, prog, nil)
 	case spec.ret:
-		return link.Kretprobe(spec.symbol, prog, nil)
+		return linkKretprobe(spec.symbol, prog, nil)
 	default:
-		return link.Kprobe(spec.symbol, prog, nil)
+		return linkKprobe(spec.symbol, prog, nil)
 	}
 }
 

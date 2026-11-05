@@ -105,15 +105,21 @@ func TestEventHandlerHandle(t *testing.T) {
 	slurmstepd.PID, slurmstepd.Comm, slurmstepd.MountIdx = 7, "slurmstepd", 1
 	worker := base
 	worker.PID, worker.Comm, worker.MountIdx = 99, "dd-3", 0
+	// The first index past the mounts, and one further out.
+	pastLastMount := base
+	pastLastMount.PID, pastLastMount.Comm, pastLastMount.MountIdx = 99, "dd", 2
+	pastLastMount.MountPath, pastLastMount.FSName = "/preset2", "preset2"
 	unknownMount := base
 	unknownMount.PID, unknownMount.Comm, unknownMount.MountIdx = 99, "dd", 5
-	for _, event := range []Event{slurmstepd, worker, unknownMount} {
+	for _, event := range []Event{slurmstepd, worker, pastLastMount, unknownMount} {
 		h.handle(event)
 	}
 
 	wantLogs := []string{
 		"debug: event plane=ptlrpc op=send_new_req uid=1001 pid=7 mount=/mnt/b comm=other dur_us=0 bytes=0 req=0",
 		"debug: event plane=ptlrpc op=send_new_req uid=1001 pid=99 mount=/mnt/a comm=dd dur_us=0 bytes=0 req=0",
+		"warning: event has unknown mount index 2",
+		"debug: event plane=ptlrpc op=send_new_req uid=1001 pid=99 mount=/preset2 comm=dd dur_us=0 bytes=0 req=0",
 		"warning: event has unknown mount index 5",
 		"debug: event plane=ptlrpc op=send_new_req uid=1001 pid=99 mount=/preset comm=dd dur_us=0 bytes=0 req=0",
 	}
@@ -129,6 +135,7 @@ func TestEventHandlerHandle(t *testing.T) {
 		// "dd-3" is normalized to the allowlisted "dd".
 		{"fsa", "/mnt/a", "1001", "testuser", "dd", ActorUser},
 		// An unknown mount index keeps the event's own mount fields.
+		{"preset2", "/preset2", "1001", "testuser", "dd", ActorUser},
 		{"preset", "/preset", "1001", "testuser", "dd", ActorUser},
 	} {
 		if got := readCounterValue(t, exporter.RequestsStarted.WithLabelValues(labels...)); got != 1 {
