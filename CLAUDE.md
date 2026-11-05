@@ -29,6 +29,9 @@ pytest legacy/tests/test_observer_agent.py -q
 # BPF verifier check via Docker (macOS OK, requires Docker --privileged)
 make verify-bpf
 
+# Complexity ranking (needs cccc, https://github.com/moznion/cccc; settings in cccc.toml)
+make complexity
+
 # Lima E2E (requires full Lima Lustre environment)
 bash ./e2e/lima/scripts/verify-observer-go.sh    # Go exporter (first-class)
 bash ./e2e/lima/scripts/verify-observer.sh        # legacy Python (second-class)

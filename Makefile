@@ -50,6 +50,12 @@ build-go-exporter:
 test-go:
 	$(GO) test ./...
 
+# Rank the most complex functions with cccc (https://github.com/moznion/cccc);
+# what is analyzed is configured in cccc.toml.
+.PHONY: complexity
+complexity:
+	cccc --table --top-cognitive 20 .
+
 GORELEASER ?= goreleaser
 
 .PHONY: snapshot
