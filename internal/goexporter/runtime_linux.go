@@ -115,48 +115,16 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	if err != nil {
 		return nil, err
 	}
-	// Rewrite the `const volatile __u8 uid_labels_enabled` global before load.
-	// When disabled, fill_start_info() in the BPF program skips
-	// bpf_get_current_uid_gid() so every event and counter-map key carries
-	// uid=0 — collapsing PERCPU_HASH rows across users. Fail fast when the
-	// operator asked for --uid-labels=false but the embedded .o predates the
-	// toggle: silently falling back would keep collecting per-UID kernel-side
-	// while userspace drops the labels, which misleads the startup log and
-	// the types.go doc comment about end-to-end behavior.
-	v, ok := spec.Variables["uid_labels_enabled"]
-	switch {
-	case ok:
-		val := uint8(1)
-		if !cfg.UIDLabelsEnabled {
-			val = 0
-		}
-		if err := v.Set(val); err != nil {
-			return nil, fmt.Errorf("set uid_labels_enabled: %w", err)
-		}
-	case !cfg.UIDLabelsEnabled:
-		return nil, fmt.Errorf("embedded BPF object does not expose uid_labels_enabled; --uid-labels=false cannot be honored")
+	if err := setUIDLabelsEnabled(spec, cfg.UIDLabelsEnabled); err != nil {
+		return nil, err
 	}
-	skippedSet := make(map[string]struct{})
 	collection, skippedPrograms, err := loadCollectionWithOptionalPrograms(spec, optional)
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range skippedPrograms {
-		skippedSet[name] = struct{}{}
-	}
-
-	configMap := collection.Maps["config_map"]
-	if configMap == nil {
+	if err := writeMountFilter(collection, mountInfos); err != nil {
 		collection.Close()
-		return nil, fmt.Errorf("config_map not found in embedded BPF object")
-	}
-	for i, mi := range mountInfos {
-		key := bpfMountKey{Major: mi.Major, Minor: mi.Minor}
-		value := uint8(i)
-		if err := configMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
-			collection.Close()
-			return nil, err
-		}
+		return nil, err
 	}
 
 	reader, err := perf.NewReader(collection.Maps["events"], os.Getpagesize()*8)
@@ -173,11 +141,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 		debugHex:   os.Getenv("LUSTRE_OBSERVER_DEBUG_HEX") == "1",
 	}
 
-	if err := source.attachAll(required, cfg.LegacySymbolAllowMissing, nil); err != nil {
-		source.Close()
-		return nil, err
-	}
-	if err := source.attachAll(optional, false, skippedSet); err != nil {
+	if err := source.attachProbes(required, optional, cfg.LegacySymbolAllowMissing, skippedPrograms); err != nil {
 		source.Close()
 		return nil, err
 	}
@@ -185,6 +149,63 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	source.started = true
 	go source.readLoop(ctx)
 	return source, nil
+}
+
+// setUIDLabelsEnabled rewrites the `const volatile __u8 uid_labels_enabled`
+// global of spec before load. When disabled, fill_start_info() in the BPF
+// program skips bpf_get_current_uid_gid() so every event and counter-map key
+// carries uid=0 — collapsing PERCPU_HASH rows across users. Fail fast when
+// the operator asked for --uid-labels=false but the embedded .o predates the
+// toggle: silently falling back would keep collecting per-UID kernel-side
+// while userspace drops the labels, which misleads the startup log and the
+// types.go doc comment about end-to-end behavior.
+func setUIDLabelsEnabled(spec *ebpf.CollectionSpec, enabled bool) error {
+	v, ok := spec.Variables["uid_labels_enabled"]
+	switch {
+	case ok:
+		val := uint8(1)
+		if !enabled {
+			val = 0
+		}
+		if err := v.Set(val); err != nil {
+			return fmt.Errorf("set uid_labels_enabled: %w", err)
+		}
+	case !enabled:
+		return fmt.Errorf("embedded BPF object does not expose uid_labels_enabled; --uid-labels=false cannot be honored")
+	}
+	return nil
+}
+
+// writeMountFilter stores the index of each mount in config_map, keyed by
+// its device numbers, so that the BPF programs report events on those mounts
+// only.
+func writeMountFilter(collection *ebpf.Collection, mountInfos []MountInfo) error {
+	configMap := collection.Maps["config_map"]
+	if configMap == nil {
+		return fmt.Errorf("config_map not found in embedded BPF object")
+	}
+	for i, mi := range mountInfos {
+		key := bpfMountKey{Major: mi.Major, Minor: mi.Minor}
+		value := uint8(i)
+		if err := configMap.Update(&key, &value, ebpf.UpdateAny); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attachProbes attaches the required probes, which allowMissing lets fail,
+// then the optional ones except the programs that
+// loadCollectionWithOptionalPrograms dropped.
+func (s *linuxEventSource) attachProbes(required, optional []probeSpec, allowMissing bool, skippedPrograms []string) error {
+	if err := s.attachAll(required, allowMissing, nil); err != nil {
+		return err
+	}
+	skippedSet := make(map[string]struct{})
+	for _, name := range skippedPrograms {
+		skippedSet[name] = struct{}{}
+	}
+	return s.attachAll(optional, false, skippedSet)
 }
 
 type probeSpec struct {

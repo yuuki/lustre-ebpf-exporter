@@ -764,3 +764,64 @@ func TestNewEventSourceFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestSetUIDLabelsEnabled covers the uid_labels_enabled rewrite on the
+// embedded object's spec, which needs no privileges, including the object
+// without the variable that TestNewEventSource cannot load.
+func TestSetUIDLabelsEnabled(t *testing.T) {
+	tests := []struct {
+		name      string
+		dropVar   bool
+		enabled   bool
+		wantValue uint8
+		wantErr   string
+	}{
+		{name: "enabled", enabled: true, wantValue: 1},
+		{name: "disabled", enabled: false, wantValue: 0},
+		{name: "object without the variable, enabled", dropVar: true, enabled: true},
+		{
+			name:    "object without the variable, disabled",
+			dropVar: true,
+			wantErr: "embedded BPF object does not expose uid_labels_enabled; --uid-labels=false cannot be honored",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, err := bpf.LoadCollectionSpec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.dropVar {
+				delete(spec.Variables, "uid_labels_enabled")
+			}
+			err = setUIDLabelsEnabled(spec, tt.enabled)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.dropVar {
+				return
+			}
+			var got uint8
+			if err := spec.Variables["uid_labels_enabled"].Get(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.wantValue {
+				t.Fatalf("uid_labels_enabled = %d, want %d", got, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestWriteMountFilterWithoutConfigMap(t *testing.T) {
+	collection := &ebpf.Collection{Maps: map[string]*ebpf.Map{}}
+	err := writeMountFilter(collection, []MountInfo{{Major: 8, Minor: 1}})
+	if err == nil || err.Error() != "config_map not found in embedded BPF object" {
+		t.Fatalf("err = %v", err)
+	}
+}
