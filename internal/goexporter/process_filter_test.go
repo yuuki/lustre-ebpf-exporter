@@ -160,3 +160,51 @@ func TestProcessFilterStripSuffixWithAllowlist(t *testing.T) {
 		t.Fatalf("expected 'other', got %q", got)
 	}
 }
+
+// TestStripSeparatorInstanceToken pins the first normalization step on its
+// own: normalizeProcessInstanceVariant falls back to the bracket and
+// trailing-number steps, which hide some of its results.
+func TestStripSeparatorInstanceToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"a", "a"},
+		{"a-", "a-"}, // a trailing separator starts no token
+		{"x 1", "x"},
+		{"x-1", "x"},
+		{"x_1", "x"},
+		{"x:1", "x"},
+		{"x/1", "x"},
+		{"x.1", "x.1"}, // a dot is not a separator
+		{"w-0", "w"},   // lowest digit
+		{"w-9", "w"},   // highest digit
+		{"w-12", "w"},  // a digit run up to the end
+		{"w-12x", "w-12x"},
+		{"w-12)", "w-12)"},
+		{"w-12(", "w"},
+		{"w-12[", "w"},
+		{"w-1/2", "w"},
+		{"a-b", "a"},     // single letter up to the end
+		{"a-B", "a"},     // upper case
+		{"a-bc", "a-bc"}, // more than one letter is a word, not a token
+		{"a-b-c", "a"},
+		{"a-x1", "a-x1"},
+		{"a-z(", "a"},
+		{"a-@", "a-@"},
+		{"a-é", "a-é"}, // non-ASCII letters are not tokens
+		{"a-_1", "a-"}, // the scan moves on to the next separator
+		{"ab (1)", "ab (1)"},
+		{"ab-1x-2", "ab-1x"},
+		{" 1", " 1"},     // would reduce to empty
+		{"-1-2", "-1-2"}, // the first token decides, even when it begins the name
+		{"0-1", "0"},
+	}
+	for _, tt := range tests {
+		if got := stripSeparatorInstanceToken(tt.input); got != tt.want {
+			t.Errorf("stripSeparatorInstanceToken(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}

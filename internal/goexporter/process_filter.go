@@ -139,23 +139,13 @@ func lastNonDigit(s string, i int) int {
 	return i
 }
 
+// stripSeparatorInstanceToken cuts s before the first separator that starts
+// an instance token ("Bun Pool 1" → "Bun Pool", "ray-dashboard-A" →
+// "ray-dashboard"). s is returned unchanged when there is none, or when the
+// first one begins s, as cutting there would leave it empty.
 func stripSeparatorInstanceToken(s string) string {
 	for i := 0; i < len(s)-1; i++ {
-		if !isSeparator(s[i]) {
-			continue
-		}
-
-		j := i + 1
-		if s[j] >= '0' && s[j] <= '9' {
-			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
-				j++
-			}
-		} else if isASCIIAlpha(s[j]) {
-			j++
-		} else {
-			continue
-		}
-		if j < len(s) && !isSeparator(s[j]) && s[j] != '(' && s[j] != '[' {
+		if !isSeparator(s[i]) || !isInstanceToken(s, i+1) {
 			continue
 		}
 		if i == 0 {
@@ -164,6 +154,37 @@ func stripSeparatorInstanceToken(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// isInstanceToken reports whether an instance token starts at s[j], which must
+// exist: a run of digits or a single ASCII letter, followed by the end of s, a
+// separator, '(' or '['.
+func isInstanceToken(s string, j int) bool {
+	end := instanceTokenEnd(s, j)
+	if end < 0 {
+		return false
+	}
+	return end == len(s) || isSeparator(s[end]) || s[end] == '(' || s[end] == '['
+}
+
+// instanceTokenEnd returns the index just past the digit run or the single
+// ASCII letter at s[j], or -1 if s[j] is neither.
+func instanceTokenEnd(s string, j int) int {
+	switch {
+	case isASCIIDigit(s[j]):
+		for j < len(s) && isASCIIDigit(s[j]) {
+			j++
+		}
+		return j
+	case isASCIIAlpha(s[j]):
+		return j + 1
+	default:
+		return -1
+	}
+}
+
+func isASCIIDigit(c byte) bool {
+	return c >= '0' && c <= '9'
 }
 
 func isASCIIAlpha(c byte) bool {
