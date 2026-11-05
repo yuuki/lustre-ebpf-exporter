@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -71,53 +72,105 @@ func main() {
 		os.Exit(0)
 	}
 
-	if len(mounts) == 0 {
-		detected, err := goexporter.DetectLustreMounts()
-		if err != nil {
-			log.Printf("Warning: failed to auto-detect Lustre mounts: %v; falling back to /mnt/lustre", err)
-			mounts = mountPathsFlag{"/mnt/lustre"}
-		} else if len(detected) == 0 {
-			log.Fatal("No Lustre mounts detected. Specify mount paths with -mount or ensure Lustre filesystems are mounted.")
-		} else {
-			mounts = detected
-			log.Printf("Auto-detected %d Lustre mount(s)", len(mounts))
-		}
+	mountPaths, err := resolveMountPaths(mounts, goexporter.DetectLustreMounts)
+	if err != nil {
+		log.Fatal(err)
 	}
-	cfg.MountPaths = mounts
+	cfg.MountPaths = mountPaths
 
+	if err := applyIntervalFlags(&cfg, drainIntervalSeconds, durationSeconds); err != nil {
+		log.Fatal(err)
+	}
+	if err := applySlurmJobIDFlags(&cfg, slurmTTLSeconds, slurmNegativeTTLSeconds, slurmVerifyTTLSeconds); err != nil {
+		log.Fatal(err)
+	}
+	cfg.ProcessAllowlist = parseProcessAllowlist(processAllowlist)
+	logStartupConfig(cfg)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := goexporter.Run(ctx, cfg); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// errNoLustreMounts is printed verbatim when no -mount is given and no Lustre
+// filesystem is mounted.
+var errNoLustreMounts = errors.New("No Lustre mounts detected. Specify mount paths with -mount or ensure Lustre filesystems are mounted.")
+
+// resolveMountPaths returns the -mount paths or, when there are none, the
+// Lustre mounts found by detect. It falls back to /mnt/lustre when detection
+// fails.
+func resolveMountPaths(mounts []string, detect func() ([]string, error)) ([]string, error) {
+	if len(mounts) > 0 {
+		return mounts, nil
+	}
+	detected, err := detect()
+	if err != nil {
+		log.Printf("Warning: failed to auto-detect Lustre mounts: %v; falling back to /mnt/lustre", err)
+		return []string{"/mnt/lustre"}, nil
+	}
+	if len(detected) == 0 {
+		return nil, errNoLustreMounts
+	}
+	log.Printf("Auto-detected %d Lustre mount(s)", len(detected))
+	return detected, nil
+}
+
+// applyIntervalFlags validates --drain-interval and --duration and stores them
+// in cfg.
+func applyIntervalFlags(cfg *goexporter.Config, drainIntervalSeconds, durationSeconds int) error {
 	if drainIntervalSeconds <= 0 {
-		log.Fatal("--drain-interval must be greater than zero")
+		return errors.New("--drain-interval must be greater than zero")
 	}
 	if durationSeconds < 0 {
-		log.Fatal("--duration must be greater than or equal to zero")
+		return errors.New("--duration must be greater than or equal to zero")
 	}
 	cfg.DrainInterval = time.Duration(drainIntervalSeconds) * time.Second
 	cfg.Duration = time.Duration(durationSeconds) * time.Second
+	return nil
+}
 
-	if slurmTTLSeconds <= 0 {
-		log.Fatal("--slurm-jobid-ttl must be greater than zero")
+// applySlurmJobIDFlags validates the Slurm job id cache flags, including the
+// cache size already parsed into cfg, and stores the TTLs in cfg.
+func applySlurmJobIDFlags(cfg *goexporter.Config, ttlSeconds, negativeTTLSeconds, verifyTTLSeconds int) error {
+	if ttlSeconds <= 0 {
+		return errors.New("--slurm-jobid-ttl must be greater than zero")
 	}
-	if slurmNegativeTTLSeconds < 0 {
-		log.Fatal("--slurm-jobid-negative-ttl must be greater than or equal to zero")
+	if negativeTTLSeconds < 0 {
+		return errors.New("--slurm-jobid-negative-ttl must be greater than or equal to zero")
 	}
-	if slurmVerifyTTLSeconds < 0 {
-		log.Fatal("--slurm-jobid-verify-ttl must be greater than or equal to zero")
+	if verifyTTLSeconds < 0 {
+		return errors.New("--slurm-jobid-verify-ttl must be greater than or equal to zero")
 	}
 	if cfg.SlurmJobIDCacheSize <= 0 {
-		log.Fatal("--slurm-jobid-cache-size must be greater than zero")
+		return errors.New("--slurm-jobid-cache-size must be greater than zero")
 	}
-	cfg.SlurmJobIDTTL = time.Duration(slurmTTLSeconds) * time.Second
-	cfg.SlurmJobIDNegativeTTL = time.Duration(slurmNegativeTTLSeconds) * time.Second
-	cfg.SlurmJobIDVerifyTTL = time.Duration(slurmVerifyTTLSeconds) * time.Second
+	cfg.SlurmJobIDTTL = time.Duration(ttlSeconds) * time.Second
+	cfg.SlurmJobIDNegativeTTL = time.Duration(negativeTTLSeconds) * time.Second
+	cfg.SlurmJobIDVerifyTTL = time.Duration(verifyTTLSeconds) * time.Second
+	return nil
+}
 
-	if processAllowlist != "" {
-		for _, name := range strings.Split(processAllowlist, ",") {
-			name = strings.TrimSpace(name)
-			if name != "" {
-				cfg.ProcessAllowlist = append(cfg.ProcessAllowlist, name)
-			}
+// parseProcessAllowlist splits the comma-separated --process-allowlist value,
+// trimming spaces and dropping empty names. It returns nil when no name is left.
+func parseProcessAllowlist(value string) []string {
+	if value == "" {
+		return nil
+	}
+	var names []string
+	for _, name := range strings.Split(value, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
 		}
 	}
+	return names
+}
+
+// logStartupConfig logs the effective configuration before the exporter starts.
+func logStartupConfig(cfg goexporter.Config) {
 	log.Printf("Starting lustre-ebpf-exporter")
 	log.Printf("Mount paths: %s", strings.Join(cfg.MountPaths, ", "))
 	log.Printf("BPF counter drain interval: %s", cfg.DrainInterval)
@@ -142,12 +195,5 @@ func main() {
 	}
 	if len(cfg.ProcessAllowlist) > 0 {
 		log.Printf("Process allowlist: %s (all others become \"other\")", strings.Join(cfg.ProcessAllowlist, ", "))
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	if err := goexporter.Run(ctx, cfg); err != nil {
-		log.Fatal(err)
 	}
 }
