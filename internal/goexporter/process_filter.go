@@ -64,38 +64,57 @@ func normalizeProcessInstanceVariant(s string) string {
 	if stripped := stripSeparatorInstanceToken(s); stripped != s {
 		return stripped
 	}
-
-	if n := len(s); n >= 3 {
-		var open byte
-		switch s[n-1] {
-		case ')':
-			open = '('
-		case ']':
-			open = '['
-		}
-		if open != 0 {
-			j := n - 2
-			for j >= 0 && s[j] >= '0' && s[j] <= '9' {
-				j--
-			}
-			hasDigits := j < n-2
-			if j >= 0 && hasDigits && s[j] == open {
-				cut := j
-				if j > 0 && isSeparator(s[j-1]) {
-					cut = j - 1
-				}
-				if cut == 0 {
-					return s // would reduce to empty
-				}
-				return s[:cut]
-			}
-		}
+	if stripped, ok := stripBracketedNumber(s); ok {
+		return stripped
 	}
+	return stripTrailingNumber(s)
+}
 
-	i := len(s) - 1
-	for i >= 0 && s[i] >= '0' && s[i] <= '9' {
-		i--
+// stripBracketedNumber strips a "(N)" or "[N]" suffix, together with one
+// separator before it ("worker (1)" → "worker"). ok reports whether s ends with
+// such a suffix; s is returned unchanged when stripping would leave it empty.
+func stripBracketedNumber(s string) (stripped string, ok bool) {
+	n := len(s)
+	if n < 3 {
+		return s, false
 	}
+	open := openingBracket(s[n-1])
+	if open == 0 {
+		return s, false
+	}
+	j := lastNonDigit(s, n-2)
+	hasDigits := j < n-2
+	if j < 0 || !hasDigits || s[j] != open {
+		return s, false
+	}
+	cut := j
+	if j > 0 && isSeparator(s[j-1]) {
+		cut = j - 1
+	}
+	if cut == 0 {
+		return s, true // would reduce to empty
+	}
+	return s[:cut], true
+}
+
+// openingBracket returns the bracket that the closing bracket c pairs with, or
+// 0 if c is not ')' or ']'.
+func openingBracket(c byte) byte {
+	switch c {
+	case ')':
+		return '('
+	case ']':
+		return '['
+	}
+	return 0
+}
+
+// stripTrailingNumber strips trailing digits together with the separator
+// before them ("worker-3" → "worker"). Digits that follow any other character
+// are left to stripDottedTrailingNumber, which strips them only after a dot
+// ("client.poll12" → "client.poll", while "python3" is kept).
+func stripTrailingNumber(s string) string {
+	i := lastNonDigit(s, len(s)-1)
 	if i == len(s)-1 {
 		return s // no trailing digits
 	}
@@ -109,6 +128,15 @@ func normalizeProcessInstanceVariant(s string) string {
 		return s[:i]
 	}
 	return stripDottedTrailingNumber(s)
+}
+
+// lastNonDigit returns the index of the last byte of s[:i+1] that is not an
+// ASCII digit, or -1 if there is none.
+func lastNonDigit(s string, i int) int {
+	for i >= 0 && s[i] >= '0' && s[i] <= '9' {
+		i--
+	}
+	return i
 }
 
 func stripSeparatorInstanceToken(s string) string {
