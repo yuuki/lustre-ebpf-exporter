@@ -259,34 +259,21 @@ func linkProbe(spec probeSpec, prog *ebpf.Program) (link.Link, error) {
 	}
 }
 
+// readLoop sends the events decoded from the perf reader to s.events until
+// the reader is closed or ctx is done, then closes s.done and s.events.
 func (s *linuxEventSource) readLoop(ctx context.Context) {
 	defer close(s.events)
 	defer close(s.done)
 	for {
 		record, err := s.reader.Read()
 		if err != nil {
-			if errors.Is(err, perf.ErrClosed) {
+			if readLoopEnds(ctx, err) {
 				return
 			}
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				log.Printf("warning: perf event read failed: %v", err)
-				continue
-			}
-		}
-		if record.LostSamples > 0 {
-			log.Printf("warning: lost %d perf samples", record.LostSamples)
 			continue
 		}
-		if s.debugHex && !s.loggedHex {
-			s.loggedHex = true
-			slog.Info("debug raw sample", "len", len(record.RawSample), "hex", fmt.Sprintf("%x", record.RawSample))
-		}
-		event, err := parseObserverEvent(record.RawSample)
-		if err != nil {
-			log.Printf("warning: decode raw event: %v", err)
+		event, ok := s.decodeRecord(record)
+		if !ok {
 			continue
 		}
 		select {
@@ -295,6 +282,41 @@ func (s *linuxEventSource) readLoop(ctx context.Context) {
 		case s.events <- event:
 		}
 	}
+}
+
+// readLoopEnds reports whether a failed read ends readLoop: when the reader
+// is closed or ctx is done. Any other failure is logged.
+func readLoopEnds(ctx context.Context, err error) bool {
+	if errors.Is(err, perf.ErrClosed) {
+		return true
+	}
+	select {
+	case <-ctx.Done():
+		return true
+	default:
+		log.Printf("warning: perf event read failed: %v", err)
+		return false
+	}
+}
+
+// decodeRecord returns the event in record, or false after logging why for a
+// lost-samples record or a sample that does not decode. With debugHex, the
+// first sample that is not lost is logged before it is decoded.
+func (s *linuxEventSource) decodeRecord(record perf.Record) (Event, bool) {
+	if record.LostSamples > 0 {
+		log.Printf("warning: lost %d perf samples", record.LostSamples)
+		return Event{}, false
+	}
+	if s.debugHex && !s.loggedHex {
+		s.loggedHex = true
+		slog.Info("debug raw sample", "len", len(record.RawSample), "hex", fmt.Sprintf("%x", record.RawSample))
+	}
+	event, err := parseObserverEvent(record.RawSample)
+	if err != nil {
+		log.Printf("warning: decode raw event: %v", err)
+		return Event{}, false
+	}
+	return event, true
 }
 
 func (s *linuxEventSource) Events() <-chan Event {
