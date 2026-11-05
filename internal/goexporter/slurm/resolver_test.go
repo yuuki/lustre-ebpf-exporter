@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -313,14 +314,23 @@ func TestResolverEnabledReportsState(t *testing.T) {
 }
 
 // recordingFS serves /proc files from a map and records every path read, in
-// order. A path missing from the map fails with os.ErrNotExist.
+// order. A path missing from the map fails with os.ErrNotExist. A read while
+// the mutex of resolver is held fails the test: Resolve must not hold its
+// lock across /proc reads. newRecordingResolver sets t and resolver.
 type recordingFS struct {
-	files map[string][]byte
-	reads []string
+	files    map[string][]byte
+	reads    []string
+	t        *testing.T
+	resolver *Resolver
 }
 
 func (f *recordingFS) read(path string) ([]byte, error) {
 	f.reads = append(f.reads, path)
+	if f.resolver.mu.TryLock() {
+		f.resolver.mu.Unlock()
+	} else {
+		f.t.Errorf("%s read with the resolver lock held", path)
+	}
 	if b, ok := f.files[path]; ok {
 		return b, nil
 	}
@@ -348,7 +358,7 @@ const (
 
 // newRecordingResolver returns an enabled resolver whose readers are fs.read
 // and whose clock is clock, with seed already cached.
-func newRecordingResolver(fs *recordingFS, clock *countingClock, maxEntries int, seed map[uint32]cacheEntry) *Resolver {
+func newRecordingResolver(t *testing.T, fs *recordingFS, clock *countingClock, maxEntries int, seed map[uint32]cacheEntry) *Resolver {
 	r := New(Options{
 		Enabled:     true,
 		TTL:         resolveTTL,
@@ -363,6 +373,7 @@ func newRecordingResolver(fs *recordingFS, clock *countingClock, maxEntries int,
 	for pid, e := range seed {
 		r.entries[pid] = e
 	}
+	fs.t, fs.resolver = t, r
 	return r
 }
 
@@ -459,7 +470,7 @@ func TestResolveFetch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &recordingFS{files: tt.files}
 			clock := &countingClock{now: resolveEpoch}
-			r := newRecordingResolver(fs, clock, 8, nil)
+			r := newRecordingResolver(t, fs, clock, 8, nil)
 			if got := r.Resolve(4242); got != (JobInfo{JobID: tt.want}) {
 				t.Fatalf("Resolve = %+v, want JobID %q", got, tt.want)
 			}
@@ -575,7 +586,7 @@ func TestResolveCachedEntry(t *testing.T) {
 			}
 			fs := &recordingFS{files: files}
 			clock := &countingClock{now: at(tt.now)}
-			r := newRecordingResolver(fs, clock, 8, map[uint32]cacheEntry{7: tt.entry})
+			r := newRecordingResolver(t, fs, clock, 8, map[uint32]cacheEntry{7: tt.entry})
 			if got := r.Resolve(7); got != (JobInfo{JobID: tt.want}) {
 				t.Fatalf("Resolve = %+v, want JobID %q", got, tt.want)
 			}
@@ -594,7 +605,7 @@ func TestResolveVerificationRestartsVerifyWindow(t *testing.T) {
 	fs := &recordingFS{files: map[string][]byte{"/proc/7/stat": statBlob(100)}}
 	clock := &countingClock{now: resolveEpoch.Add(resolveVerifyTTL)}
 	entry := cacheEntry{starttime: 100, info: JobInfo{JobID: "9"}, expiresAt: resolveEpoch.Add(time.Minute), verifiedAt: resolveEpoch}
-	r := newRecordingResolver(fs, clock, 8, map[uint32]cacheEntry{7: entry})
+	r := newRecordingResolver(t, fs, clock, 8, map[uint32]cacheEntry{7: entry})
 
 	steps := []struct {
 		now       time.Duration
@@ -656,7 +667,7 @@ func TestResolveEviction(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &recordingFS{files: files}
-			r := newRecordingResolver(fs, &countingClock{now: resolveEpoch}, tt.maxEntries, map[uint32]cacheEntry{1: older, 2: newer})
+			r := newRecordingResolver(t, fs, &countingClock{now: resolveEpoch}, tt.maxEntries, map[uint32]cacheEntry{1: older, 2: newer})
 			if got := r.Resolve(tt.pid); got.JobID != "42" {
 				t.Fatalf("Resolve = %+v, want JobID 42", got)
 			}
@@ -668,7 +679,7 @@ func TestResolveEviction(t *testing.T) {
 func TestResolveDisabledReadsNothing(t *testing.T) {
 	fs := &recordingFS{files: map[string][]byte{"/proc/7/stat": statBlob(100)}}
 	clock := &countingClock{now: resolveEpoch}
-	r := newRecordingResolver(fs, clock, 8, nil)
+	r := newRecordingResolver(t, fs, clock, 8, nil)
 	r.opts.Enabled = false
 	if got := r.Resolve(7); got != (JobInfo{}) {
 		t.Fatalf("Resolve = %+v, want empty", got)
@@ -680,5 +691,49 @@ func TestResolveDisabledReadsNothing(t *testing.T) {
 	assertReads(t, fs)
 	if clock.calls != 0 {
 		t.Fatalf("clock read %d times, want 0", clock.calls)
+	}
+}
+
+// TestResolveConcurrent resolves overlapping pids from several goroutines
+// against a clock that advances on every read, so that lookups take every
+// path: the fast path, re-verification, refetches and evictions. Under -race
+// it fails if any access to the cache is made without the lock.
+func TestResolveConcurrent(t *testing.T) {
+	t.Parallel()
+
+	fs := &fakeFS{stat: statBlob(100), environ: []byte("SLURM_JOB_ID=42\x00")}
+	var ticks atomic.Int64
+	r := New(Options{
+		Enabled:     true,
+		TTL:         20 * time.Millisecond,
+		VerifyTTL:   3 * time.Millisecond,
+		MaxEntries:  4,
+		ReadStat:    fs.readStat,
+		ReadEnviron: fs.readEnviron,
+		ReadCgroup:  fs.readCgroup,
+		Now:         func() time.Time { return resolveEpoch.Add(time.Duration(ticks.Add(1)) * time.Millisecond) },
+	})
+
+	const goroutines, lookups = 8, 2000
+	var wg sync.WaitGroup
+	for g := range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range lookups {
+				pid := uint32((g + i) % 7)
+				if got := r.Resolve(pid); got.JobID != "42" {
+					t.Errorf("Resolve(%d) = %+v, want JobID 42", pid, got)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.entries) > 4 {
+		t.Fatalf("cache holds %d entries, want at most 4", len(r.entries))
 	}
 }
