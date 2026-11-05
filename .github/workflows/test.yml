@@ -35,3 +35,14 @@ jobs:
 
       - name: Run tests
         run: go test ./...
+
+      # TestNewEventSource and TestNewEventSourceFailures load the embedded
+      # BPF object for real, so they skip in the unprivileged run above. Run
+      # them as root here (the runner kernel has BTF, and the tests fake the
+      # kprobe attaches); LUSTRE_EBPF_REQUIRE_BPF=1 turns a skip into a
+      # failure.
+      - name: Run BPF loading tests as root
+        run: |
+          go test -c -o "$RUNNER_TEMP/goexporter.test" ./internal/goexporter
+          cd internal/goexporter
+          sudo LUSTRE_EBPF_REQUIRE_BPF=1 "$RUNNER_TEMP/goexporter.test" -test.run '^TestNewEventSource' -test.v

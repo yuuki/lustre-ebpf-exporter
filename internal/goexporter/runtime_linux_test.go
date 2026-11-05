@@ -511,11 +511,17 @@ var wantAttachOrder = []string{
 }
 
 // requireEmbeddedObject skips the test unless the embedded BPF object can be
-// loaded here, which takes privileges and kernel BTF.
+// loaded here, which takes privileges and kernel BTF. With
+// LUSTRE_EBPF_REQUIRE_BPF=1 it fails the test instead.
 func requireEmbeddedObject(t *testing.T) {
 	t.Helper()
+	unavailable := t.Skipf
+	if os.Getenv("LUSTRE_EBPF_REQUIRE_BPF") == "1" {
+		// Set by the privileged CI step, where a skip would hide the tests.
+		unavailable = t.Fatalf
+	}
 	if err := rlimit.RemoveMemlock(); err != nil {
-		t.Skipf("cannot load BPF programs: %v", err)
+		unavailable("cannot load BPF programs: %v", err)
 	}
 	spec, err := bpf.LoadCollectionSpec()
 	if err != nil {
@@ -523,7 +529,7 @@ func requireEmbeddedObject(t *testing.T) {
 	}
 	collection, err := ebpf.NewCollection(spec)
 	if err != nil {
-		t.Skipf("cannot load the embedded BPF object: %v", err)
+		unavailable("cannot load the embedded BPF object: %v", err)
 	}
 	collection.Close()
 }

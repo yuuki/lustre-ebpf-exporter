@@ -329,6 +329,15 @@ Go unit tests:
 go test ./...
 ```
 
+The tests that load the embedded BPF object (`TestNewEventSource*`) skip
+without root. CI also runs them as root, with `LUSTRE_EBPF_REQUIRE_BPF=1`
+making a skip a failure:
+
+```bash
+go test -c -o /tmp/goexporter.test ./internal/goexporter
+(cd internal/goexporter && sudo LUSTRE_EBPF_REQUIRE_BPF=1 /tmp/goexporter.test -test.run '^TestNewEventSource')
+```
+
 Lima E2E for the Go exporter:
 
 ```bash
