@@ -5,15 +5,17 @@
 # Measure hand-written production code only: tests, generated code and vendored
 # sources would skew the distribution.
 exclude = [
-  "*_test.go",  # Go tests
-  "e2e/**",     # end-to-end test suites
-  "tests/**",   # Lima E2E harness
-  "legacy/**",  # frozen Python + bpftrace fallback
-  "*.bpf.c",    # BPF programs: the parser cannot read their section and map macros
+  "*_test.go",   # Go tests
+  "e2e/**",      # end-to-end test suites
+  "tests/**",    # Lima E2E harness
+  "legacy/**",   # frozen Python + bpftrace fallback
+  "*.bpf.c",     # BPF programs: the verifier constrains how they can be split
+  "vendor/**",   # vendored Go modules (go mod vendor)
+  "*_bpfel.go",  # bpf2go-generated bindings (also gitignored)
 ]
 
 # Fail when a function's cognitive complexity exceeds this. The threshold is a
-# ratchet toward 15, SonarSource's default: split a function that exceeds it
-# rather than raising the threshold, and lower the threshold to the new maximum
-# whenever refactoring brings the maximum down.
-max-cognitive = 20
+# ratchet toward 15, SonarSource's default: it is the highest score in the code
+# today, so split a function that would exceed it rather than raising it, and
+# lower it whenever refactoring brings the maximum down.
+max-cognitive = 19
