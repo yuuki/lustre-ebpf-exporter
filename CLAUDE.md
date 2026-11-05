@@ -29,7 +29,7 @@ pytest legacy/tests/test_observer_agent.py -q
 # BPF verifier check via Docker (macOS OK, requires Docker --privileged)
 make verify-bpf
 
-# Complexity ranking (needs cccc, https://github.com/moznion/cccc; fails above max-cognitive in cccc.toml)
+# Complexity ranking (needs cccc, https://github.com/moznion/cccc; CI tracks the scores with octocov)
 make complexity
 
 # Lima E2E (requires full Lima Lustre environment)
