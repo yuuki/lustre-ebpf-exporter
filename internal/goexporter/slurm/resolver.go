@@ -99,62 +99,106 @@ func (r *Resolver) Resolve(pid uint32) JobInfo {
 	now := r.opts.Now()
 
 	// Fast path: cache hit within VerifyTTL skips even the stat read.
-	r.mu.Lock()
-	entry, ok := r.entries[pid]
-	if ok && entry.expiresAt.After(now) && entry.verifiedAt.Add(r.opts.VerifyTTL).After(now) {
-		info := entry.info
-		r.mu.Unlock()
+	if info, ok := r.cachedVerified(pid, now); ok {
 		return info
 	}
-	r.mu.Unlock()
 
 	// Slow path: read starttime, compare against cached value.
 	pidStr := strconv.FormatUint(uint64(pid), 10)
-	statRaw, err := r.opts.ReadStat("/proc/" + pidStr + "/stat")
-	if err != nil {
+	start, ok := r.readStarttime(pidStr)
+	if !ok {
 		// Process gone or inaccessible. Do not poison the cache; a new
 		// event for this pid may come with different conditions.
-		return JobInfo{}
-	}
-	start, err := ParseProcStatStarttime(statRaw)
-	if err != nil {
 		return JobInfo{}
 	}
 
 	// Re-check cache with the fresh starttime so a concurrent refresh
 	// does not cause duplicate /proc reads.
-	r.mu.Lock()
-	entry, ok = r.entries[pid]
-	if ok && entry.starttime == start && entry.expiresAt.After(now) {
-		entry.verifiedAt = now
-		r.entries[pid] = entry
-		info := entry.info
-		r.mu.Unlock()
+	if info, ok := r.reverify(pid, start, now); ok {
 		return info
 	}
-	r.mu.Unlock()
 
 	// Fetch: environ -> cgroup -> empty.
-	info := JobInfo{}
-	if raw, err := r.opts.ReadEnviron("/proc/" + pidStr + "/environ"); err == nil {
-		if v, ok := parseSlurmJobIDFromEnviron(raw); ok {
-			info.JobID = v
-		}
-	}
-	if info.JobID == "" {
-		if raw, err := r.opts.ReadCgroup("/proc/" + pidStr + "/cgroup"); err == nil {
-			if v, ok := parseSlurmJobIDFromCgroup(raw); ok {
-				info.JobID = v
-			}
-		}
-	}
+	info := JobInfo{JobID: r.readJobID(pidStr)}
+	r.store(pid, start, info, now)
+	return info
+}
 
+// cachedVerified returns the cached info for pid if the entry has not expired
+// and was verified within VerifyTTL.
+func (r *Resolver) cachedVerified(pid uint32, now time.Time) (JobInfo, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.entries[pid]
+	if ok && entry.expiresAt.After(now) && entry.verifiedAt.Add(r.opts.VerifyTTL).After(now) {
+		return entry.info, true
+	}
+	return JobInfo{}, false
+}
+
+// readStarttime returns the starttime in /proc/<pid>/stat; ok is false if the
+// file cannot be read or parsed.
+func (r *Resolver) readStarttime(pidStr string) (start uint64, ok bool) {
+	statRaw, err := r.opts.ReadStat("/proc/" + pidStr + "/stat")
+	if err != nil {
+		return 0, false
+	}
+	start, err = ParseProcStatStarttime(statRaw)
+	if err != nil {
+		return 0, false
+	}
+	return start, true
+}
+
+// reverify returns the cached info for pid, and marks the entry verified at
+// now, if the entry has not expired and belongs to the process with this
+// starttime.
+func (r *Resolver) reverify(pid uint32, start uint64, now time.Time) (JobInfo, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.entries[pid]
+	if !ok || entry.starttime != start || !entry.expiresAt.After(now) {
+		return JobInfo{}, false
+	}
+	entry.verifiedAt = now
+	r.entries[pid] = entry
+	return entry.info, true
+}
+
+// readJobID returns the Slurm job id of pid from its environment, falling back
+// to its cgroup, or "" if neither names a job.
+func (r *Resolver) readJobID(pidStr string) string {
+	if jobID := readJobIDFile(r.opts.ReadEnviron, "/proc/"+pidStr+"/environ", parseSlurmJobIDFromEnviron); jobID != "" {
+		return jobID
+	}
+	return readJobIDFile(r.opts.ReadCgroup, "/proc/"+pidStr+"/cgroup", parseSlurmJobIDFromCgroup)
+}
+
+// readJobIDFile reads path and returns the job id that parse finds in it, or
+// "" if the read fails or parse finds none.
+func readJobIDFile(read FSReader, path string, parse func([]byte) (string, bool)) string {
+	raw, err := read(path)
+	if err != nil {
+		return ""
+	}
+	jobID, ok := parse(raw)
+	if !ok {
+		return ""
+	}
+	return jobID
+}
+
+// store caches info for pid, positive results for TTL and negative ones for
+// NegativeTTL. A full cache first drops the entry closest to expiry, even
+// when pid itself is cached.
+func (r *Resolver) store(pid uint32, start uint64, info JobInfo, now time.Time) {
 	ttl := r.opts.NegativeTTL
 	if info.JobID != "" {
 		ttl = r.opts.TTL
 	}
 
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	if len(r.entries) >= r.opts.MaxEntries {
 		evictOldest(r.entries)
 	}
@@ -164,7 +208,4 @@ func (r *Resolver) Resolve(pid uint32) JobInfo {
 		expiresAt:  now.Add(ttl),
 		verifiedAt: now,
 	}
-	r.mu.Unlock()
-
-	return info
 }
