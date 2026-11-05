@@ -94,6 +94,14 @@ func TestNormalizeProcessInstanceVariant(t *testing.T) {
 		{"x(ab)", "x(ab)"},         // non-digits inside parens → leave unchanged
 		{"a(1)", "a"},              // shortest valid parenthesised input
 		{"foo(bar)-1", "foo(bar)"}, // paren path misses, falls through to separator path
+		{"", ""},
+		{"12)", "12)"},   // digits but no opening paren → leave unchanged
+		{"x(1]", "x(1]"}, // mismatched brackets → leave unchanged
+		{"x[1)", "x[1)"},
+		{" (1)", " (1)"},   // would reduce to empty → leave unchanged
+		{"-1-2", "-1"},     // leading token is kept, trailing separator+digits stripped
+		{"ab.12", "ab.12"}, // digits right after the dot read as a version
+		{"a.b-c 1", "a.b"}, // the first instance token cuts the rest
 	}
 	for _, tt := range tests {
 		if got := normalizeProcessInstanceVariant(tt.input); got != tt.want {

@@ -22,16 +22,9 @@ type EventSource interface {
 }
 
 func Run(ctx context.Context, cfg Config) error {
-	if len(cfg.MountPaths) > MaxMountPoints {
-		return fmt.Errorf("too many mount paths (%d); maximum is %d", len(cfg.MountPaths), MaxMountPoints)
-	}
-	var mountInfos []MountInfo
-	for _, mp := range cfg.MountPaths {
-		mi, err := ResolveMountInfo(mp)
-		if err != nil {
-			return err
-		}
-		mountInfos = append(mountInfos, mi)
+	mountInfos, err := resolveMountInfos(cfg.MountPaths)
+	if err != nil {
+		return err
 	}
 
 	source, err := newEventSource(ctx, cfg, mountInfos)
@@ -60,6 +53,17 @@ func Run(ctx context.Context, cfg Config) error {
 
 	debugEnabled := os.Getenv("LUSTRE_OBSERVER_DEBUG") == "1"
 
+	handler := &eventHandler{
+		mountInfos:       mountInfos,
+		procNameResolver: procNameResolver,
+		processFilter:    processFilter,
+		debugEnabled:     debugEnabled,
+		exporter:         exporter,
+		inflight:         inflightTracker,
+		resolver:         resolver,
+		slurmResolver:    slurmResolver,
+	}
+
 	var durationTimer <-chan time.Time
 	if cfg.Duration > 0 {
 		timer := time.NewTimer(cfg.Duration)
@@ -87,21 +91,55 @@ func Run(ctx context.Context, cfg Config) error {
 			if !ok {
 				return nil
 			}
-			if int(event.MountIdx) < len(mountInfos) {
-				mi := mountInfos[event.MountIdx]
-				event.MountPath = mi.Path
-				event.FSName = mi.FSName
-			} else {
-				log.Printf("warning: event has unknown mount index %d", event.MountIdx)
-			}
-			rawComm := procNameResolver.Resolve(event.PID, event.Comm)
-			event.Comm = processFilter.Normalize(rawComm)
-			if debugEnabled {
-				log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
-			}
-			processEvent(event, rawComm, exporter, inflightTracker, resolver, slurmResolver)
+			handler.handle(event)
 		}
 	}
+}
+
+// resolveMountInfos resolves every configured mount path, in order. The
+// position of a mount in the result is the mount index the BPF program reports.
+func resolveMountInfos(mountPaths []string) ([]MountInfo, error) {
+	if len(mountPaths) > MaxMountPoints {
+		return nil, fmt.Errorf("too many mount paths (%d); maximum is %d", len(mountPaths), MaxMountPoints)
+	}
+	var mountInfos []MountInfo
+	for _, mp := range mountPaths {
+		mi, err := ResolveMountInfo(mp)
+		if err != nil {
+			return nil, err
+		}
+		mountInfos = append(mountInfos, mi)
+	}
+	return mountInfos, nil
+}
+
+// eventHandler enriches each decoded BPF event with its mount and process name
+// and records it as metrics.
+type eventHandler struct {
+	mountInfos       []MountInfo
+	procNameResolver *ProcNameResolver
+	processFilter    *ProcessFilter
+	debugEnabled     bool
+	exporter         *PrometheusExporter
+	inflight         *InflightTracker
+	resolver         *UsernameResolver
+	slurmResolver    *slurm.Resolver
+}
+
+func (h *eventHandler) handle(event Event) {
+	if int(event.MountIdx) < len(h.mountInfos) {
+		mi := h.mountInfos[event.MountIdx]
+		event.MountPath = mi.Path
+		event.FSName = mi.FSName
+	} else {
+		log.Printf("warning: event has unknown mount index %d", event.MountIdx)
+	}
+	rawComm := h.procNameResolver.Resolve(event.PID, event.Comm)
+	event.Comm = h.processFilter.Normalize(rawComm)
+	if h.debugEnabled {
+		log.Printf("debug: event plane=%s op=%s uid=%d pid=%d mount=%s comm=%s dur_us=%d bytes=%d req=%d", event.Plane, event.Op, event.UID, event.PID, event.MountPath, event.Comm, event.DurationUS, event.SizeBytes, event.RequestPtr)
+	}
+	processEvent(event, rawComm, h.exporter, h.inflight, h.resolver, h.slurmResolver)
 }
 
 func processEvent(event Event, rawComm string, exporter *PrometheusExporter, inflight *InflightTracker, resolver *UsernameResolver, slurmResolver *slurm.Resolver) {
