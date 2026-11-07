@@ -1,9 +1,9 @@
 # Contributing to lustre-ebpf-exporter
 
 Thanks for helping. The [README](README.md) describes what the exporter
-measures and how to run it; [AGENTS.md](AGENTS.md) is the full guide to the
-code, every make target and the compatibility contracts, for people and coding
-agents alike.
+measures and how to run it; [AGENTS.md](AGENTS.md) holds the rules, the
+compatibility contracts and the conventions, for people and coding agents
+alike.
 
 ## Proposing a change
 
@@ -33,7 +33,7 @@ AGENTS.md lists what else to run for which change.
 ## Style
 
 - Code comments and documentation in English.
-- Commit subjects are short and scoped: `fix: ...`, `build: ...`, `ci: ...`,
-  `docs: ...`, `refactor: ...`, `chore: ...`.
+- Commits, branches and pull request titles follow the Git conventions in
+  [AGENTS.md](AGENTS.md#git-conventions).
 - AI-assisted contributions are welcome, but a human must review them before
   they are submitted.

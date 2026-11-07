@@ -324,7 +324,7 @@ Legacy Python exporter (second-class): see [`legacy/README.md`](legacy/README.md
 ## Verification
 
 Go unit tests (`make test`; `make check` adds the linters and the race
-detector, see [AGENTS.md](AGENTS.md) for every target):
+detector, see the [Makefile](Makefile) for every target):
 
 ```bash
 make test
