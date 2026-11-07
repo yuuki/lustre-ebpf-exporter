@@ -52,7 +52,7 @@ func run() error {
 	if err != nil {
 		var ve *ebpf.VerifierError
 		if errors.As(err, &ve) {
-			return fmt.Errorf("verifier rejected program:\n%+v", ve)
+			return fmt.Errorf("verifier rejected program:\n%+v", ve) //nolint:errorlint // %+v prints the whole verifier log, %w only its summary
 		}
 		return fmt.Errorf("load collection: %w", err)
 	}

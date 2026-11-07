@@ -1,10 +1,14 @@
 package slurm
 
-import "bytes"
+import (
+	"bytes"
+	"strings"
+)
 
 // parseSlurmJobIDFromEnviron scans a NUL-separated /proc/<pid>/environ blob
 // for SLURM_JOB_ID (preferred) or the legacy SLURM_JOBID. Empty values are
-// treated as "not found".
+// treated as "not found". Any process can set these variables, and the value
+// becomes a label value, so invalid UTF-8 is replaced with U+FFFD.
 func parseSlurmJobIDFromEnviron(raw []byte) (string, bool) {
 	var legacy string
 	var legacyFound bool
@@ -24,14 +28,14 @@ func parseSlurmJobIDFromEnviron(raw []byte) (string, bool) {
 		}
 		switch string(key) {
 		case "SLURM_JOB_ID":
-			return string(val), true
+			return strings.ToValidUTF8(string(val), "\uFFFD"), true
 		case "SLURM_JOBID":
 			legacy = string(val)
 			legacyFound = true
 		}
 	}
 	if legacyFound {
-		return legacy, true
+		return strings.ToValidUTF8(legacy, "\uFFFD"), true
 	}
 	return "", false
 }

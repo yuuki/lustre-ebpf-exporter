@@ -71,7 +71,7 @@ func TestResolveMountPaths(t *testing.T) {
 				return tt.detected, tt.err
 			}
 			got, err := resolveMountPaths(tt.mounts, detect)
-			if err != tt.wantErr {
+			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
 			if !reflect.DeepEqual(got, tt.want) {

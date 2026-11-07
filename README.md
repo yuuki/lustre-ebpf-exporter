@@ -232,10 +232,8 @@ Build Linux artifacts with Docker:
 make docker-build-go-exporter
 ```
 
-This produces:
-
-- `dist/linux-amd64/lustre-ebpf-exporter`
-- `dist/linux-amd64/lustre_ebpf_exporter.bpf.o`
+This produces `dist/linux-amd64/lustre-ebpf-exporter`, with the BPF object
+embedded in the binary.
 
 Run the exporter (mount paths are auto-detected if `--mount` is omitted):
 
@@ -283,7 +281,6 @@ Native Go build:
 ```bash
 make generate-go-exporter
 make build-go-exporter
-make stage-go-exporter
 ```
 
 Recommended Linux artifact build:
@@ -319,25 +316,27 @@ Go exporter:
 - Linux
 - root privileges
 - a working Lustre client mount
-- a compatible prebuilt BPF object
+- kernel BTF (`/sys/kernel/btf/vmlinux`), for the CO-RE relocations of the
+  embedded BPF object
 
 Legacy Python exporter (second-class): see [`legacy/README.md`](legacy/README.md).
 
 ## Verification
 
-Go unit tests:
+Go unit tests (`make test`; `make check` adds the linters and the race
+detector, see [AGENTS.md](AGENTS.md) for every target):
 
 ```bash
-go test ./...
+make test
 ```
 
-The tests that load the embedded BPF object (`TestNewEventSource*`) skip
-without root. CI also runs them as root, with `LUSTRE_EBPF_REQUIRE_BPF=1`
-making a skip a failure:
+The tests that load the embedded BPF object or create its maps
+(`TestNewEventSource*`, `TestBPFCounterCollectorDrainsEmbeddedMaps`) skip
+without root. CI also runs the package's tests as root, with
+`LUSTRE_EBPF_REQUIRE_BPF=1` making a skip a failure:
 
 ```bash
-go test -c -o /tmp/goexporter.test ./internal/goexporter
-(cd internal/goexporter && sudo LUSTRE_EBPF_REQUIRE_BPF=1 /tmp/goexporter.test -test.run '^TestNewEventSource')
+make test-integration   # uses sudo unless already root
 ```
 
 Lima E2E for the Go exporter:

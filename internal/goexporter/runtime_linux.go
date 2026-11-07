@@ -142,7 +142,7 @@ func newEventSource(ctx context.Context, cfg Config, mountInfos []MountInfo) (Ev
 	}
 
 	if err := source.attachProbes(required, optional, cfg.LegacySymbolAllowMissing, skippedPrograms); err != nil {
-		source.Close()
+		_ = source.Close() // the attach error is the one to report
 		return nil, err
 	}
 

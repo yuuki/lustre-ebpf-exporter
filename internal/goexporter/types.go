@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -355,6 +356,10 @@ type MountInfo struct {
 	Minor  uint32
 }
 
+// sanitizeComm returns the NUL-terminated task comm in raw as a label value.
+// The kernel copies comm verbatim and any process can set its own (exec,
+// prctl(PR_SET_NAME)), so each invalid UTF-8 sequence is replaced with U+FFFD:
+// Prometheus rejects label values that are not UTF-8.
 func sanitizeComm(raw []byte) string {
 	// Skip leading null bytes without allocating (replaces bytes.TrimLeft).
 	start := 0
@@ -362,10 +367,10 @@ func sanitizeComm(raw []byte) string {
 		start++
 	}
 	end := bytes.IndexByte(raw[start:], 0)
-	if end >= 0 {
-		return string(raw[start : start+end])
+	if end < 0 {
+		end = len(raw) - start
 	}
-	return string(raw[start:])
+	return strings.ToValidUTF8(string(raw[start:start+end]), "\uFFFD")
 }
 
 func parseObserverEvent(sample []byte) (Event, error) {

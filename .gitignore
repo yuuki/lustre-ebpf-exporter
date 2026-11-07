@@ -1,3 +1,6 @@
 /dist
 /lustre-ebpf-exporter
 *bpfel.go
+*_bpfel.o
+__pycache__/
+/bench.txt
