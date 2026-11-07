@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -94,6 +95,10 @@ func buildRPCErrorLabels(slurmEnabled, uidEnabled bool) []string {
 	return appendSlurmLabel(labels, slurmEnabled)
 }
 
+// readHeaderTimeout bounds how long the metrics server waits for the request
+// headers of a connection.
+const readHeaderTimeout = 10 * time.Second
+
 // PrometheusExporter serves Prometheus metrics via HTTP.
 // Histograms and gauges are updated directly; counters are provided
 // by the BPFCounterCollector custom Collector.
@@ -162,12 +167,15 @@ func NewPrometheusExporter(listenAddress string, telemetryPath string, counterCo
 
 	mux := http.NewServeMux()
 	mux.Handle(telemetryPath, promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
-	listener, err := net.Listen("tcp", listenAddress)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listenAddress)
 	if err != nil {
 		return nil, err
 	}
 	exporter.listener = listener
-	exporter.server = &http.Server{Handler: mux}
+	// The exporter runs as root and listens on all interfaces by default: a
+	// client that never finishes its request headers must not hold a
+	// connection, and its file descriptor, forever.
+	exporter.server = &http.Server{Handler: mux, ReadHeaderTimeout: readHeaderTimeout}
 	go func() {
 		_ = exporter.server.Serve(listener)
 	}()

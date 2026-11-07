@@ -47,7 +47,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer exporter.Shutdown(context.Background())
+	defer func() { _ = exporter.Shutdown(context.Background()) }()
 
 	inflightTracker := NewInflightTracker(exporter.Inflight, cfg.SlurmJobIDEnabled, cfg.UIDLabelsEnabled)
 

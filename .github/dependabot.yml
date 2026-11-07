@@ -1,0 +1,35 @@
+# Version updates arrive monthly, grouped into one PR per ecosystem, and only
+# after a release has been public for a week (compromised releases are usually
+# pulled within days). Security updates are not delayed by this schedule.
+#
+# Not covered on purpose: legacy/requirements-observer.txt (the frozen Python
+# fallback, bug fixes only) and the Dockerfiles under build/docker (local build
+# and verifier images, not run in CI; their golang tag follows the go directive
+# in go.mod and is bumped together with it).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+      include: scope
+
+  - package-ecosystem: gomod
+    directories: ["/"]
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
+      include: scope

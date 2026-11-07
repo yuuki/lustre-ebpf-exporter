@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,8 +119,9 @@ func (r *ProcNameResolver) Resolve(pid uint32, commFallback string) string {
 	return name
 }
 
-
-// parseCmdlineName returns the basename of argv[0] from a /proc/<pid>/cmdline blob.
+// parseCmdlineName returns the basename of argv[0] from a /proc/<pid>/cmdline
+// blob as a label value: argv[0] is whatever the process exec'd with, so each
+// invalid UTF-8 sequence is replaced with U+FFFD.
 func parseCmdlineName(raw []byte) string {
 	if i := bytes.IndexByte(raw, 0); i >= 0 {
 		raw = raw[:i]
@@ -127,5 +129,5 @@ func parseCmdlineName(raw []byte) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	return filepath.Base(string(raw))
+	return strings.ToValidUTF8(filepath.Base(string(raw)), "\uFFFD")
 }

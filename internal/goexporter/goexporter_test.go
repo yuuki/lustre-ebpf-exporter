@@ -215,7 +215,7 @@ func TestResolveMountInfoFromText(t *testing.T) {
 	if info.FSName != "home" {
 		t.Fatalf("unexpected fs name %q", info.FSName)
 	}
-	if info.Major != uint32(unixMajor(424242)) || info.Minor != uint32(unixMinor(424242)) {
+	if info.Major != unixMajor(424242) || info.Minor != unixMinor(424242) {
 		t.Fatalf("unexpected device identity: %#v", info)
 	}
 }
@@ -520,6 +520,39 @@ func TestSanitizeCommTrimsLeadingAndTrailingNulls(t *testing.T) {
 	got := sanitizeComm([]byte{0, 0, 'd', 'd', 0, 0})
 	if got != "dd" {
 		t.Fatalf("expected dd, got %q", got)
+	}
+}
+
+// Any process can give itself a comm or argv[0] that is not UTF-8, which
+// Prometheus rejects as a label value: on the counter path that failed every
+// scrape, on the perf-event path it panicked.
+func TestProcessNamesAreValidLabelValues(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"comm", sanitizeComm([]byte("\xffevil\x00\x00")), "�evil"},
+		{"comm, valid UTF-8 kept", sanitizeComm([]byte("caf\xc3\xa9\x00")), "café"},
+		{"cmdline", parseCmdlineName([]byte("/tmp/\xc3\x28x\x00arg\x00")), "�(x"},
+		{"cmdline, valid UTF-8 kept", parseCmdlineName([]byte("/opt/café/run\x00")), "run"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+
+	exporter, err := NewPrometheusExporter("127.0.0.1:0", "/metrics", nil, false, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exporter.Shutdown(context.Background())
+	event := Event{Plane: PlanePtlRPC, Op: OpSendNewReq, UID: 1001, Comm: sanitizeComm([]byte("\xfe\x00"))}
+	processEvent(event, event.Comm, exporter, NewInflightTracker(exporter.Inflight, false, true), testResolver(), testSlurmResolver())
+	if _, err := exporter.RenderText(); err != nil {
+		t.Fatal(err)
 	}
 }
 

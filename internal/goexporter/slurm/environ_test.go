@@ -6,10 +6,10 @@ func TestParseSlurmJobIDFromEnviron(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name    string
-		raw     string
-		want    string
-		wantOK  bool
+		name   string
+		raw    string
+		want   string
+		wantOK bool
 	}{
 		{
 			name: "empty",
@@ -49,6 +49,14 @@ func TestParseSlurmJobIDFromEnviron(t *testing.T) {
 			name:   "slurm_job_id wins over legacy",
 			raw:    "SLURM_JOBID=999\x00SLURM_JOB_ID=42\x00",
 			want:   "42",
+			wantOK: true,
+		},
+		{
+			// Any process can set it; the value becomes a label value,
+			// which must be UTF-8.
+			name:   "invalid UTF-8 replaced",
+			raw:    "SLURM_JOB_ID=4\xff2\x00",
+			want:   "4�2",
 			wantOK: true,
 		},
 	}

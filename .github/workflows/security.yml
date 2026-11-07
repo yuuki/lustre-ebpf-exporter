@@ -1,0 +1,104 @@
+name: Security
+
+# CodeQL code scanning (Go, and Python for the frozen legacy/ agent and the
+# Lima harness tests) and govulncheck for known vulnerabilities in the Go
+# dependencies that the code reaches. GitHub Actions workflows are audited by
+# zizmor in the `workflows` job of test.yml instead.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+  # Weekly: new advisories and queries arrive without a code change.
+  schedule:
+    - cron: "41 4 * * 4"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload the results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Go packages cannot build before bpf2go generates the
+          # gitignored bindings, so autobuild would fail.
+          - language: go
+            build-mode: manual
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install BPF toolchain
+        if: matrix.language == 'go'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libbpf-dev libelf-dev linux-libc-dev
+
+      - name: Generate BPF bindings
+        if: matrix.language == 'go'
+        run: make generate-go-exporter GOOS=linux GOARCH=amd64
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Build
+        if: matrix.build-mode == 'manual'
+        run: go build ./...
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # govulncheck type-checks every package, internal/bpf included, which
+      # needs the gitignored bpf2go bindings.
+      - name: Install BPF toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libbpf-dev libelf-dev linux-libc-dev
+
+      - name: Generate BPF bindings
+        run: make generate-go-exporter GOOS=linux GOARCH=amd64
+
+      - name: govulncheck
+        run: make vuln

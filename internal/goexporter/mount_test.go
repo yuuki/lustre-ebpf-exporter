@@ -36,6 +36,22 @@ func TestDetectLustreMountsFromText(t *testing.T) {
 			input: "",
 			want:  nil,
 		},
+		{
+			// The kernel escapes space, tab, newline and backslash in the
+			// device and mount point fields as octal; a bare backslash that
+			// starts no such escape is kept.
+			name: "escaped mount points",
+			input: "10.0.0.1@tcp:/scratch /mnt/my\\040lustre lustre rw 0 0\n" +
+				"10.0.0.1@tcp:/home /mnt/a\\011b\\012c\\134d lustre rw 0 0\n" +
+				"10.0.0.1@tcp:/data /mnt/x\\9\\04 lustre rw 0 0\n",
+			want: []string{"/mnt/my lustre", "/mnt/a\tb\nc\\d", "/mnt/x\\9\\04"},
+		},
+		{
+			// Whitespace that the kernel does not escape is part of the field.
+			name:  "unescaped whitespace in a mount point",
+			input: "10.0.0.1@tcp:/scratch /mnt/no\u00a0break\vtab lustre rw 0 0\n",
+			want:  []string{"/mnt/no\u00a0break\vtab"},
+		},
 	}
 
 	for _, tt := range tests {

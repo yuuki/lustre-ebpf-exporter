@@ -34,11 +34,11 @@ func DetectLustreMountsFromText(mountsText string) ([]string, error) {
 	var paths []string
 	scanner := bufio.NewScanner(strings.NewReader(mountsText))
 	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
+		fields := mountFields(scanner.Text())
 		if len(fields) < 3 || fields[2] != "lustre" {
 			continue
 		}
-		paths = append(paths, fields[1])
+		paths = append(paths, unescapeMountField(fields[1]))
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
@@ -59,11 +59,11 @@ func ResolveMountInfoFromText(
 
 	scanner := bufio.NewScanner(strings.NewReader(mountsText))
 	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
+		fields := mountFields(scanner.Text())
 		if len(fields) < 3 || fields[2] != "lustre" {
 			continue
 		}
-		resolvedCandidate, err := realpathFn(fields[1])
+		resolvedCandidate, err := realpathFn(unescapeMountField(fields[1]))
 		if err != nil {
 			return MountInfo{}, err
 		}
@@ -78,19 +78,64 @@ func ResolveMountInfoFromText(
 		if !ok {
 			return MountInfo{}, fmt.Errorf("unexpected stat type for %s", resolvedCandidate)
 		}
-		fsName := deriveFSName(fields[0])
+		source := unescapeMountField(fields[0])
+		dev := uint64(statT.Dev) //nolint:unconvert // Stat_t.Dev is not uint64 everywhere (int32 on darwin)
 		return MountInfo{
-			Source: fields[0],
+			Source: source,
 			Path:   resolvedCandidate,
-			FSName: fsName,
-			Major:  uint32(unixMajor(uint64(statT.Dev))),
-			Minor:  uint32(unixMinor(uint64(statT.Dev))),
+			FSName: deriveFSName(source),
+			Major:  unixMajor(dev),
+			Minor:  unixMinor(dev),
 		}, nil
 	}
 	if err := scanner.Err(); err != nil {
 		return MountInfo{}, err
 	}
 	return MountInfo{}, fmt.Errorf("mount path is not a lustre mount: %s", mountPath)
+}
+
+// mountFields splits a /proc/mounts line into its fields. The kernel separates
+// them with a space and escapes the spaces, tabs, newlines and backslashes in
+// a field, but no other whitespace: strings.Fields would also split a mount
+// point at, say, a no-break space.
+func mountFields(line string) []string {
+	return strings.FieldsFunc(line, func(r rune) bool { return r == ' ' })
+}
+
+// unescapeMountField undoes the octal escapes that the kernel writes for a
+// space, tab, newline or backslash in the device and mount point fields of
+// /proc/mounts (\040, \011, \012, \134), so that a mount point such as
+// "/mnt/my lustre" resolves to its real path.
+func unescapeMountField(field string) string {
+	if !strings.Contains(field, `\`) {
+		return field
+	}
+	var b strings.Builder
+	b.Grow(len(field))
+	for i := 0; i < len(field); i++ {
+		if c, ok := octalEscape(field[i:]); ok {
+			b.WriteByte(c)
+			i += 3
+			continue
+		}
+		b.WriteByte(field[i])
+	}
+	return b.String()
+}
+
+// octalEscape decodes the \ooo escape (\000 to \377) at the start of s.
+func octalEscape(s string) (byte, bool) {
+	if len(s) < 4 || s[0] != '\\' || s[1] < '0' || s[1] > '3' {
+		return 0, false
+	}
+	c := s[1] - '0'
+	for _, d := range []byte(s[2:4]) {
+		if d < '0' || d > '7' {
+			return 0, false
+		}
+		c = c<<3 | (d - '0')
+	}
+	return c, true
 }
 
 func deriveFSName(source string) string {
@@ -105,10 +150,13 @@ func deriveFSName(source string) string {
 	return name
 }
 
-func unixMajor(dev uint64) uint64 {
-	return (dev >> 8) & 0xfff
+// unixMajor and unixMinor split the device number that stat(2) reports (the
+// kernel's new_encode_dev: 12-bit major, 20-bit minor), which the masks keep
+// within 32 bits.
+func unixMajor(dev uint64) uint32 {
+	return uint32((dev >> 8) & 0xfff)
 }
 
-func unixMinor(dev uint64) uint64 {
-	return (dev & 0xff) | ((dev >> 12) & 0xffffff00)
+func unixMinor(dev uint64) uint32 {
+	return uint32((dev & 0xff) | ((dev >> 12) & 0xffffff00)) //nolint:gosec // G115: both operands are masked to 32 bits
 }

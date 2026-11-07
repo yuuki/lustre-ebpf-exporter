@@ -97,7 +97,7 @@ func main() {
 
 // errNoLustreMounts is printed verbatim when no -mount is given and no Lustre
 // filesystem is mounted.
-var errNoLustreMounts = errors.New("No Lustre mounts detected. Specify mount paths with -mount or ensure Lustre filesystems are mounted.")
+var errNoLustreMounts = errors.New("No Lustre mounts detected. Specify mount paths with -mount or ensure Lustre filesystems are mounted.") //nolint:staticcheck // ST1005: a user-facing message that log.Fatal prints verbatim
 
 // resolveMountPaths returns the -mount paths or, when there are none, the
 // Lustre mounts found by detect. It falls back to /mnt/lustre when detection
