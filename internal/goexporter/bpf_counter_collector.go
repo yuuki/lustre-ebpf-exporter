@@ -262,11 +262,10 @@ func (c *BPFCounterCollector) resolveUID(keyUID uint32) (uid, username string) {
 func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*lliteAccum) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
+		process, actor := c.commLabels(key.Comm)
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
 		uid, username := c.resolveUID(key.UID)
-		actor := actorTypeName(key.ActorType)
 
 		// slurm_job_id is always empty for counters; the label arity
 		// already encodes both slurm and uid toggles so vals is a
@@ -284,6 +283,17 @@ func (c *BPFCounterCollector) drainLLiteStyle(m *ebpf.Map, acc map[string]*llite
 	})
 }
 
+// commLabels returns the process and actor_type labels of a counter key's
+// comm. The actor type comes from ClassifyActorType, as it does for events,
+// rather than from the key's ActorType: the BPF classify_actor_type knows no
+// system daemons, so counters said "user" where histograms of the same
+// process said "system_daemon". Like events, it classifies the comm before
+// the process filter collapses it to "other".
+func (c *BPFCounterCollector) commLabels(comm [16]byte) (process, actor string) {
+	raw := sanitizeComm(comm[:])
+	return c.processFilter.Normalize(raw), ClassifyActorType(raw)
+}
+
 func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 	c.drainLLiteStyle(m, c.lliteAcc)
 }
@@ -291,10 +301,9 @@ func (c *BPFCounterCollector) drainLLite(m *ebpf.Map) {
 func (c *BPFCounterCollector) drainRPC(m *ebpf.Map) {
 	drainCounterMap(m, func(key bpfAggKey, total bpfCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
+		process, actor := c.commLabels(key.Comm)
 		op := rawOpToName(key.Op)
 		uid, username := c.resolveUID(key.UID)
-		actor := actorTypeName(key.ActorType)
 
 		vals := ptlrpcLabelValues(fsName, mountPath, op, uid, username, process, actor, "", c.slurmEnabled, c.uidEnabled)
 		accKey := joinLabelKey(vals...)
@@ -340,11 +349,10 @@ func drainErrorCounterMap(m *ebpf.Map, onEntry func(key bpfErrorAggKey, total bp
 func (c *BPFCounterCollector) drainLLiteStyleErrors(m *ebpf.Map, acc map[string]*lliteErrorAccum) {
 	drainErrorCounterMap(m, func(key bpfErrorAggKey, total bpfErrorCounterVal) {
 		mountPath, fsName := c.mountLabel(key.MountIdx)
-		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
+		process, actor := c.commLabels(key.Comm)
 		intent := intentName(key.Intent)
 		op := rawOpToName(key.Op)
 		uid, username := c.resolveUID(key.UID)
-		actor := actorTypeName(key.ActorType)
 		errno := errnoClassName(key.Reason)
 
 		// lliteLabelValues owns the shared prefix (including slurm_job_id
@@ -373,9 +381,8 @@ func (c *BPFCounterCollector) drainRPCErrors(m *ebpf.Map) {
 		if eventName == "" {
 			eventName = unknownRPCEvent
 		}
-		process := c.processFilter.Normalize(sanitizeComm(key.Comm[:]))
+		process, actor := c.commLabels(key.Comm)
 		uid, username := c.resolveUID(key.UID)
-		actor := actorTypeName(key.ActorType)
 
 		// buildRPCErrorLabels order: fs, mount, event, [uid, username,]
 		// process, actor_type, [slurm_job_id]. ptlrpcLabelValues happens
