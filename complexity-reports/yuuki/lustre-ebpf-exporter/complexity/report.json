@@ -1,9 +1,9 @@
 {
   "repository": "yuuki/lustre-ebpf-exporter/complexity",
   "ref": "refs/heads/main",
-  "commit": "dbf8b444fe05c7c48d659449c416447a90059bce",
+  "commit": "eeb228de3f9dba1b93e407214f03bd1186dedb0b",
   "base_ref": "refs/heads/main",
-  "timestamp": "2026-11-07T11:30:36.210059668Z",
+  "timestamp": "2026-11-08T04:20:39.232986174Z",
   "custom_metrics": [
     {
       "key": "code_complexity",
@@ -12,7 +12,7 @@
         {
           "key": "function_count",
           "name": "Function count",
-          "value": 148
+          "value": 149
         },
         {
           "key": "cognitive_sum",
@@ -37,7 +37,7 @@
         {
           "key": "cyclomatic_sum",
           "name": "Cyclomatic: total",
-          "value": 513
+          "value": 514
         },
         {
           "key": "cyclomatic_max",
