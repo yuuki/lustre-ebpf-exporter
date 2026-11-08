@@ -32,3 +32,28 @@ func TestPrometheusExporterBoundsHeaderReads(t *testing.T) {
 		t.Fatalf("ReadHeaderTimeout = %v, want %v", got, readHeaderTimeout)
 	}
 }
+
+// Counter labels classify the key's comm with ClassifyActorType, like events:
+// the BPF program never reports a system daemon, so its ActorType is not used.
+func TestCommLabelsClassifyLikeEvents(t *testing.T) {
+	c := NewBPFCounterCollector(nil, nil, nil, nil, nil, testResolver(), testSlurmResolver(), NewProcessFilter(nil, false), false, true)
+	comm := func(s string) (b [16]byte) {
+		copy(b[:], s)
+		return b
+	}
+	for _, tc := range []struct{ comm, process, actor string }{
+		{"dd", "dd", ActorUser},
+		{"node_exporter", "node_exporter", ActorSystemDaemon},
+		{"sshd", "sshd", ActorSystemDaemon},
+		{"slurmstepd", "slurmstepd", ActorBatchJob},
+		{"ptlrpcd_00_01", "ptlrpcd_00_01", ActorClientWorker},
+	} {
+		process, actor := c.commLabels(comm(tc.comm))
+		if process != tc.process || actor != tc.actor {
+			t.Errorf("commLabels(%q) = %q, %q; want %q, %q", tc.comm, process, actor, tc.process, tc.actor)
+		}
+		if got := ClassifyActorType(tc.comm); got != actor {
+			t.Errorf("commLabels(%q) actor %q, but events classify it as %q", tc.comm, actor, got)
+		}
+	}
+}

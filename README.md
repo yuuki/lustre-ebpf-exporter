@@ -75,6 +75,13 @@ And actors are classified into:
 - `system_daemon`: known system daemons and `*exporter` processes
 - `client_worker`: `ptlrpcd_*` Lustre internal threads
 
+Histograms classify the basename of the process's `argv[0]`; the BPF
+counters classify the kernel's task name (comm), which the kernel cuts to 15
+characters. Both use the same rules, so the actor type of a process differs
+only when its name is longer than that: `lustre_client_exporter` is
+`system_daemon` in histograms but its comm `lustre_client_e` is `user` in
+counters.
+
 ## Repository Layout
 
 First-class (Go exporter):

@@ -2,7 +2,7 @@
 
 ## Rules
 - `legacy/` (Python + bpftrace) is frozen: bug fixes only, nothing beyond the fix; new work goes to the Go exporter (`cmd/`, `internal/`).
-- Actor and intent classification exist in C (`classify_actor_type`, `intent_for_op`) and Go (`ClassifyActorType`, `intentForOp`): change both together.
+- Every `actor_type` label comes from Go's `ClassifyActorType` (counters classify the key's comm); C's `classify_actor_type` only fills the map key. Intent classification exists in C (`intent_for_op`) and Go (`intentForOp`): change both together.
 - Per-event lookups (username, process name, Slurm) fall back to a default instead of returning an error; no per-event logging outside `LUSTRE_OBSERVER_DEBUG*`.
 - `tests/test_lima_lustre_e2e.py` is not run in CI and has stale assertions.
 
