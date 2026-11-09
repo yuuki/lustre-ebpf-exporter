@@ -23,7 +23,8 @@ alike.
 On Linux with clang, llvm and the libbpf headers installed:
 
 ```bash
-make check             # golangci-lint, go mod tidy, actionlint + zizmor, race tests
+make check             # golangci-lint, go mod tidy, actionlint + zizmor + actions.lock, race tests
+make lock-actions      # after changing a uses: line in .github/workflows
 make test-integration  # as root: BPF loading tests (when touching BPF or the runtime)
 ```
 
