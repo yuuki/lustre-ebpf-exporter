@@ -1,6 +1,6 @@
 module github.com/yuuki/lustre-ebpf-exporter
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/cilium/ebpf v0.22.0
@@ -16,6 +16,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pandatix/go-abnf v0.5.5 // indirect
 	github.com/prometheus/procfs v0.23.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
