@@ -1,5 +1,7 @@
 # lustre-ebpf-exporter
 
+[![CI](https://github.com/yuuki/lustre-ebpf-exporter/actions/workflows/test.yml/badge.svg)](https://github.com/yuuki/lustre-ebpf-exporter/actions/workflows/test.yml)
+[![Security](https://github.com/yuuki/lustre-ebpf-exporter/actions/workflows/security.yml/badge.svg)](https://github.com/yuuki/lustre-ebpf-exporter/actions/workflows/security.yml)
 [![AI Generated](https://img.shields.io/badge/AI%20Generated-Claude-orange?logo=anthropic)](https://claude.ai/claude-code)
 [![License](https://img.shields.io/github/license/yuuki/lustre-ebpf-exporter)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/yuuki/lustre-ebpf-exporter)](https://github.com/yuuki/lustre-ebpf-exporter/releases)
