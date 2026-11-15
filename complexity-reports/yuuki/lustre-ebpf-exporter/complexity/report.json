@@ -1,9 +1,9 @@
 {
   "repository": "yuuki/lustre-ebpf-exporter/complexity",
   "ref": "refs/heads/main",
-  "commit": "096cd6b3db5fb2a933cc502ff4832a42bbf939eb",
+  "commit": "6047fe3df6b46c46b261ff2bb82915346efcaec6",
   "base_ref": "refs/heads/main",
-  "timestamp": "2026-11-11T11:01:04.404913302Z",
+  "timestamp": "2026-11-15T01:55:10.047587667Z",
   "custom_metrics": [
     {
       "key": "code_complexity",
