@@ -31,6 +31,9 @@ Important assumptions:
 ./e2e/lima/scripts/destroy.sh
 ```
 
+To check the exporter on the running cluster, build it with `make docker-build-go-exporter`
+and run `./e2e/lima/scripts/verify-observer-go.sh` before `destroy.sh`.
+
 `up.sh` runs the following steps in order:
 
 1. Validate the Lima templates

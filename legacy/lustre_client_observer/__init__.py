@@ -1,2 +1,0 @@
-"""Lustre client observer package."""
-

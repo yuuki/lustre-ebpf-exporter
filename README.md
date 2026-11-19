@@ -11,11 +11,7 @@
 It uses `llite` as the primary observation plane for user-facing access activity and `PtlRPC`
 as the secondary observation plane for client-internal wait behavior.
 
-The repository currently contains two implementations:
-
-- **First-class**: a Go-based Prometheus Exporter backed by eBPF CO-RE. This is the
-  supported runtime and the only path that receives active development.
-- **Second-class (legacy)**: a frozen Python + `bpftrace` fallback under [`legacy/`](legacy/README.md).
+It is a Go-based Prometheus Exporter backed by eBPF CO-RE.
 
 The project is aimed at answering questions such as:
 
@@ -33,20 +29,17 @@ What works today:
 - Mount-scoped observation of llite entry activity.
 - Per-user and per-process aggregation.
 - Actor classification as `user`, `batch_job`, `system_daemon`, or `client_worker`.
-- Prometheus export from both implementations.
-- Lima-based E2E coverage for the Go exporter and the legacy Python path.
+- Prometheus export.
+- Lima-based E2E coverage for the Go exporter.
 
 Important current limitation:
 
-- The Go exporter currently emits llite operation counts, plus PtlRPC wait and inflight metrics when
+- The Go exporter emits llite operation counts, plus PtlRPC wait and inflight metrics when
   the relevant optional probes are available.
-- The legacy Python path still provides llite latency and byte-volume metrics.
-- The Go path does not currently emit llite latency and llite byte-volume metrics, because the
-  llite completion correlation used in the current Linux E2E path is not yet robust enough to
-  claim those values as production-quality.
-
-If you need `lustre_client_access_duration_seconds` and `lustre_client_data_bytes_total` today,
-use the legacy Python exporter.
+- It also emits llite latency (`lustre_client_access_duration_seconds`) and byte volume
+  (`lustre_client_data_bytes_total`), but the llite completion correlation behind them is not
+  yet robust enough to claim those values as production-quality, and the Lima E2E does not
+  check them.
 
 ## Observation Model
 
@@ -86,8 +79,6 @@ counters.
 
 ## Repository Layout
 
-First-class (Go exporter):
-
 - `cmd/lustre-ebpf-exporter`
   Go CLI entrypoint for the supported exporter.
 - `internal/bpf`
@@ -96,13 +87,8 @@ First-class (Go exporter):
   Go runtime, aggregation, mount resolution, and Prometheus export.
 - `build/docker/go-exporter.Dockerfile`
   Docker build environment for Linux Go exporter artifacts.
-
-Second-class (legacy Python + `bpftrace`): see [`legacy/`](legacy/README.md).
-
-Shared:
-
 - `e2e/lima`
-  Lima-based multi-VM Lustre test environment used by both paths.
+  Lima-based multi-VM Lustre test environment.
 
 ## Metrics
 
@@ -213,9 +199,9 @@ operates on the normalized names. Disabled by default.
 2. If `--process-allowlist` is set, names not in the list become `"other"`.
 3. If neither is set, all process names pass through unchanged.
 
-### Metric Coverage by Implementation
+### Metric Coverage
 
-Go CO-RE exporter:
+The Go CO-RE exporter emits:
 
 - `lustre_client_access_operations_total`
 - `lustre_client_access_duration_seconds`
@@ -226,14 +212,10 @@ Go CO-RE exporter:
 - `lustre_client_rpc_errors_total` when the relevant optional probes are available (`ptlrpc_resend_req`, `ptlrpc_restart_req`, `ptlrpc_expire_one_request`, `ptlrpc_request_handle_notconn`)
 - `lustre_client_inflight_requests` when request lifecycle probes are available
 
-The legacy Python exporter has its own metric coverage; see [`legacy/`](legacy/README.md).
-
 The Go exporter registers all Prometheus families, but the current aggregator only emits the
 families that it can populate meaningfully.
 
 ## Quick Start
-
-### First-class Path: Go CO-RE Exporter
 
 Build Linux artifacts with Docker:
 
@@ -279,10 +261,6 @@ Useful flags:
 The exporter follows the standard Prometheus exporter flag style for `--web.listen-address`
 and `--web.telemetry-path`.
 
-### Second-class Path: Legacy Python + bpftrace
-
-See [`legacy/README.md`](legacy/README.md).
-
 ## Building
 
 Native Go build:
@@ -320,15 +298,11 @@ and run `make complexity`, which ranks the most complex functions.
 
 ## Requirements
 
-Go exporter:
-
 - Linux
 - root privileges
 - a working Lustre client mount
 - kernel BTF (`/sys/kernel/btf/vmlinux`), for the CO-RE relocations of the
   embedded BPF object
-
-Legacy Python exporter (second-class): see [`legacy/README.md`](legacy/README.md).
 
 ## Verification
 
@@ -354,7 +328,7 @@ Lima E2E for the Go exporter:
 bash ./e2e/lima/scripts/verify-observer-go.sh
 ```
 
-For the legacy Python path and full Lima environment setup, see [e2e/lima/README.md](e2e/lima/README.md).
+For the full Lima environment setup, see [e2e/lima/README.md](e2e/lima/README.md).
 
 ## Known Limitations
 
@@ -367,9 +341,3 @@ For the legacy Python path and full Lima environment setup, see [e2e/lima/README
   still needs broader validation.
 - The project does not export file paths, inode numbers, PIDs, or request pointers as metric
   labels by design.
-
-## Why Two Implementations?
-
-The Python + `bpftrace` path was the fastest way to validate the observation model and is
-kept under [`legacy/`](legacy/README.md) solely for the metrics the Go path does not yet
-emit. Once metric parity is reached, `legacy/` will be removed.
