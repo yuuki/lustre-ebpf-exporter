@@ -1,9 +1,9 @@
 name: Security
 
-# CodeQL code scanning (Go, and Python for the frozen legacy/ agent and the
-# Lima harness tests) and govulncheck for known vulnerabilities in the Go
-# dependencies that the code reaches. GitHub Actions workflows are audited by
-# zizmor in the `workflows` job of test.yml instead.
+# CodeQL code scanning (Go, and Python for the Lima harness tests) and
+# govulncheck for known vulnerabilities in the Go dependencies that the code
+# reaches. GitHub Actions workflows are audited by zizmor in the `workflows`
+# job of test.yml instead.
 on:
   push:
     branches: ["main"]

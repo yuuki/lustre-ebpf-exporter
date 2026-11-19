@@ -44,16 +44,6 @@ elif ! dnf install -y \
     lustre-client
 fi
 
-log "installing client-side observability dependencies"
-dnf install -y \
-  bpftrace \
-  python39 \
-  python39-pip
-
-REPO_ROOT="$(cd "$(dirname "${COMMON_SCRIPT}")/../../.." && pwd)"
-python3.9 -m pip install --upgrade pip
-python3.9 -m pip install -r "${REPO_ROOT}/legacy/requirements-observer.txt"
-
 iface="$(primary_interface)"
 configure_lnet "${iface}"
 ensure_hosts_entry "${SERVER_IP}" "${SERVER_HOST_ALIAS}"

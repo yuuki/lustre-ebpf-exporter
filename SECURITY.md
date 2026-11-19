@@ -16,8 +16,7 @@ memory or be rejected in a way that disables monitoring silently; information
 in the metrics beyond the documented labels (README "Metrics"). By design the
 metrics expose usernames, uids, process names and Slurm job ids to whoever can
 reach the listen address; restrict it with `--web.listen-address` and the
-firewall rather than reporting this as a vulnerability. The frozen Python
-fallback under `legacy/` receives security fixes too.
+firewall rather than reporting this as a vulnerability.
 
 ## Supported versions
 

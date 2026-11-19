@@ -12,8 +12,6 @@ alike.
   Include the exporter version, the kernel and Lustre client versions, the
   command line and the relevant log lines. Report security issues privately as
   described in [SECURITY.md](SECURITY.md).
-- New work targets the Go exporter (`cmd/`, `internal/`). `legacy/` is frozen:
-  bug fixes only.
 - Keep pull requests small and focused, and explain why the change is needed.
   Changes to metric names, labels, flags or the BPF event layout are
   compatibility changes: say so in the description.
